@@ -1,0 +1,8 @@
+Django
+djangorestframework
+django-cors-headers
+openpyxl
+requests
+celery
+redis
+python-dotenv

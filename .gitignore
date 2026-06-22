@@ -1,0 +1,19 @@
+# Secrets
+.env
+
+# Base de données
+db.sqlite3
+
+# Environnement virtuel
+.venv_stage/
+
+# Python compilé
+__pycache__/
+*.pyc
+*.pyo
+
+# PyCharm
+.idea/
+
+# Migrations pycache (garder les fichiers .py, pas les .pyc)
+campagnes/migrations/__pycache__/

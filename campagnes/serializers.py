@@ -1,10 +1,16 @@
-# campagnes/serializers.py
-
 from rest_framework import serializers
-from .models import Client, Campagne, Envoi, TemplateWhatsApp
+from .models import Client, Campagne, Envoi, TemplateWhatsApp, BoutonTemplateWhatsApp
+
+
+class BoutonTemplateWhatsAppSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = BoutonTemplateWhatsApp
+        fields = ['id', 'ordre', 'type_bouton', 'texte', 'url', 'numero_telephone']
 
 
 class TemplateWhatsAppSerializer(serializers.ModelSerializer):
+    boutons = BoutonTemplateWhatsAppSerializer(many=True, read_only=True)
+
     class Meta:
         model = TemplateWhatsApp
         fields = [
@@ -13,10 +19,13 @@ class TemplateWhatsAppSerializer(serializers.ModelSerializer):
             'categorie',
             'langue',
             'statut',
-            'nombre_variables',
+            'type_header',
             'contenu_header',
             'contenu_body',
             'contenu_footer',
+            'nombre_variables',
+            'exemples_variables_body',
+            'boutons',
             'description',
             'date_creation_meta',
             'date_approbation',
@@ -26,7 +35,7 @@ class TemplateWhatsAppSerializer(serializers.ModelSerializer):
 class ClientSerializer(serializers.ModelSerializer):
     class Meta:
         model = Client
-        fields = ['id', 'nom', 'numero', 'email', 'date_ajout']
+        fields = ['id', 'nom', 'numero', 'email', 'ville','entreprise','segment','date_ajout']
 
 
 class CampagneSerializer(serializers.ModelSerializer):
@@ -35,7 +44,17 @@ class CampagneSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Campagne
-        fields = ['id', 'nom', 'date_envoi', 'statut', 'template', 'template_nom', 'variables_template', 'statistiques']
+        fields = [
+            'id',
+            'nom',
+            'date_creation',
+            'date_envoi',
+            'statut',
+            'template',
+            'template_nom',
+            'variables_template',
+            'statistiques',
+        ]
 
     def get_statistiques(self, obj):
         return obj.statistiques()

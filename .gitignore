@@ -1,19 +1,24 @@
 # Secrets
 .env
-
+.env.local
+.env.*.local
 # Base de données
 db.sqlite3
-
 # Environnement virtuel
 .venv_stage/
-
+venv/
 # Python compilé
 __pycache__/
-*.pyc
-*.pyo
-
+**/__pycache__/
+*.py[cod]
 # PyCharm
 .idea/
-
-# Migrations pycache (garder les fichiers .py, pas les .pyc)
-campagnes/migrations/__pycache__/
+# Frontend React
+Stage_frontend/node_modules/
+Stage_frontend/dist/
+Stage_frontend/.env.local
+Stage_frontend/.env.*.local
+# Logs
+*.log
+# Fichiers média uploadés (contenu généré)
+whatsapp/

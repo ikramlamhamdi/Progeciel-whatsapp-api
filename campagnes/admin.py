@@ -1,15 +1,19 @@
-# campagnes/admin.py
-
 from django.contrib import admin
-from .models import Client, Campagne, Envoi, TemplateWhatsApp
+from .models import Client, Campagne, Envoi, TemplateWhatsApp, BoutonTemplateWhatsApp
 
+
+class BoutonTemplateWhatsAppInline(admin.TabularInline):
+    model = BoutonTemplateWhatsApp
+    extra = 1
+    max_num = 3
 
 @admin.register(TemplateWhatsApp)
 class TemplateWhatsAppAdmin(admin.ModelAdmin):
-    list_display = ['nom', 'categorie', 'langue', 'statut', 'nombre_variables', 'est_utilisable']
-    list_filter = ['statut', 'categorie', 'langue']
+    list_display = ['nom', 'categorie', 'langue', 'statut', 'type_header', 'nombre_variables', 'est_utilisable']
+    list_filter = ['statut', 'categorie', 'type_header', 'langue']
     search_fields = ['nom', 'contenu_body']
     readonly_fields = ['date_creation_meta', 'date_approbation']
+    inlines = [BoutonTemplateWhatsAppInline]
 
     def est_utilisable(self, obj):
         return obj.est_utilisable()
@@ -31,7 +35,6 @@ class CampagneAdmin(admin.ModelAdmin):
     search_fields = ['nom']
 
     def apercu_stats(self, obj):
-        """Affiche un résumé calculé à la volée depuis Envoi (toujours à jour)."""
         stats = obj.statistiques()
         return f"{stats['envoye']} envoyés / {stats['lu']} lus / {stats['echec']} échecs"
     apercu_stats.short_description = "Statistiques"

@@ -1,119 +1,136 @@
 # campagnes/tasks.py
-
-import re
-
+import time
+import logging
 import requests
-
-from celery import shared_task
 from django.conf import settings
 from django.utils import timezone
-from .models import Client, Campagne, Envoi, TemplateWhatsApp
+from celery import shared_task
 
-META_REQUEST_TIMEOUT = 15
+from .models import Campagne, Client, Envoi, TemplateWhatsApp
+from .services import construire_payload, resoudre_variables_pour_client, normaliser_numero
 
+logger = logging.getLogger(__name__)
 
-def normaliser_numero(numero):
-    numero = re.sub(r'[^\d+]', '', str(numero or '').strip())
-    numero = numero.removeprefix('+')
-
-    if numero.startswith('00'):
-        numero = numero[2:]
-    if numero.startswith('0'):
-        numero = numero[1:]
-    if not numero.startswith('212'):
-        numero = f'212{numero}'
-
-    return f'+{numero}'
+GRAPH_VERSION = getattr(settings, 'META_GRAPH_VERSION', 'v23.0')
+DELAI_ENTRE_ENVOIS = 0.15  # ~6-7 msg/s, marge de sécurité sous les limites de débit Meta
+MAX_TENTATIVES_429 = 3
 
 
-def construire_payload(template, numero, variables=None):
-    payload = {
-        "messaging_product": "whatsapp",
-        "recipient_type": "individual",
-        "to": numero,
-        "type": "template",
-        "template": {
-            "name": template.nom,
-            "language": {"code": template.langue}
-        }
-    }
-    if variables and template.nombre_variables > 0:
-        payload["template"]["components"] = [
-            {
-                "type": "body",
-                "parameters": [
-                    {"type": "text", "text": str(param)} for param in variables
-                ]
-            }
-        ]
-    return payload
-
-
-@shared_task(bind=True, max_retries=3)
-def envoyer_message_whatsapp(self, client_id, campagne_id, template_id, variables=None):
-    """
-    Tâche Celery : envoyer UN message WhatsApp à UN client.
-    Gère les retries et les rate limits.
-    """
+@shared_task(bind=True)
+def envoyer_campagne_async(self, campagne_id, client_ids, template_id, variables, mapping_variables, header_media_id, header_url):
     try:
-        client = Client.objects.get(id=client_id)
         campagne = Campagne.objects.get(id=campagne_id)
+    except Campagne.DoesNotExist:
+        logger.error(f"[Celery] Campagne {campagne_id} introuvable, tâche annulée.")
+        return
+
+    try:
         template = TemplateWhatsApp.objects.get(id=template_id)
+    except TemplateWhatsApp.DoesNotExist:
+        logger.error(f"[Celery] Template {template_id} introuvable, campagne {campagne_id} annulée.")
+        campagne.statut = 'echec'
+        campagne.save(update_fields=['statut'])
+        return
 
-        # Vérifier que le template est utilisable
-        if not template.est_utilisable():
-            raise Exception(f"Template {template.nom} non approuvé")
+    clients = Client.objects.filter(id__in=client_ids)
+    url_api = f"https://graph.facebook.com/{GRAPH_VERSION}/{settings.WHATSAPP_PHONE_NUMBER_ID}/messages"
+    headers = {
+        'Authorization': f'Bearer {settings.WHATSAPP_TOKEN}',
+        'Content-Type': 'application/json',
+    }
 
-        # Normaliser le numéro
+    succes = 0
+    echecs = 0
+
+    for client in clients:
         numero = normaliser_numero(client.numero)
+        variables_client = resoudre_variables_pour_client(
+            client, mapping_variables, template.nombre_variables, variables_statiques=variables
+        )
+        payload = construire_payload(
+            template, numero, variables_client,
+            header_url=header_url or None,
+            header_media_id=header_media_id or None,
+        )
 
-        # Construire le payload
-        payload = construire_payload(template, numero, variables or [])
+        tentative = 0
+        while True:
+            tentative += 1
+            try:
+                response = requests.post(url_api, headers=headers, json=payload, timeout=15)
+                try:
+                    result = response.json()
+                except ValueError:
+                    result = {}
 
-        # Headers API Meta
-        url = f"https://graph.facebook.com/v18.0/{settings.WHATSAPP_PHONE_NUMBER_ID}/messages"
-        headers = {
-            'Authorization': f'Bearer {settings.WHATSAPP_TOKEN}',
-            'Content-Type': 'application/json'
-        }
+                if response.status_code == 429 and tentative < MAX_TENTATIVES_429:
+                    attente = 2 ** tentative  # 2s, puis 4s
+                    logger.warning(
+                        f"[Celery] Rate limit Meta atteint pour {client.id}, "
+                        f"retry dans {attente}s (tentative {tentative})"
+                    )
+                    time.sleep(attente)
+                    continue
 
-        # Envoyer le message
-        response = requests.post(url, headers=headers, json=payload, timeout=META_REQUEST_TIMEOUT)
-        result = response.json()
+                if 200 <= response.status_code < 300:
+                    message_id = result.get('messages', [{}])[0].get('id', '')
+                    Envoi.objects.update_or_create(
+                        campagne=campagne, client=client,
+                        defaults={
+                            'statut': 'envoye',
+                            'message_id_whatsapp': message_id,
+                            'erreur': '',
+                            'date_envoi': timezone.now(),
+                        }
+                    )
+                    succes += 1
+                else:
+                    erreur_meta = result.get('error', {}) if isinstance(result, dict) else {}
+                    erreur_msg = erreur_meta.get('message', 'Erreur inconnue')
+                    code = erreur_meta.get('code')
+                    sous_code = erreur_meta.get('error_subcode')
+                    details = (erreur_meta.get('error_data') or {}).get('details')
 
-        if 200 <= response.status_code < 300:
-            # ✅ Succès
-            message_id = result.get('messages', [{}])[0].get('id', '')
-            Envoi.objects.update_or_create(
-                campagne=campagne,
-                client=client,
-                defaults={
-                    'statut': 'envoye',
-                    'message_id_whatsapp': message_id,
-                    'erreur': '',
-                    'date_envoi': timezone.now(),
-                }
-            )
-            return {'success': True, 'message_id': message_id}
+                    erreur_complete = erreur_msg
+                    if code:
+                        erreur_complete += f' (code {code}'
+                        if sous_code:
+                            erreur_complete += f', sous-code {sous_code}'
+                        erreur_complete += ')'
+                    if details:
+                        erreur_complete += f' — {details}'
 
-        elif response.status_code == 429:
-            # ❌ Rate limit Meta - retry après 60 secondes
-            raise self.retry(countdown=60, exc=Exception("Rate limit Meta"))
+                    Envoi.objects.update_or_create(
+                        campagne=campagne, client=client,
+                        defaults={
+                            'statut': 'echec',
+                            'erreur': erreur_complete,
+                            'date_envoi': timezone.now(),
+                        }
+                    )
+                    echecs += 1
 
-        else:
-            # ❌ Erreur API
-            erreur = result.get('error', {}).get('message', 'Erreur inconnue')
-            Envoi.objects.update_or_create(
-                campagne=campagne,
-                client=client,
-                defaults={
-                    'statut': 'echec',
-                    'erreur': erreur,
-                    'date_envoi': timezone.now(),
-                }
-            )
-            raise Exception(erreur)
+            except Exception as e:
+                Envoi.objects.update_or_create(
+                    campagne=campagne, client=client,
+                    defaults={
+                        'statut': 'echec',
+                        'erreur': str(e),
+                        'date_envoi': timezone.now(),
+                    }
+                )
+                echecs += 1
 
-    except Exception as exc:
-        # ❌ Erreur réseau ou autre - retry
-        raise self.retry(countdown=60, exc=exc)
+            break
+
+        time.sleep(DELAI_ENTRE_ENVOIS)
+
+    if echecs == 0:
+        campagne.statut = 'terminee'
+    elif succes == 0:
+        campagne.statut = 'echec'
+    else:
+        campagne.statut = 'partiel'
+    campagne.save(update_fields=['statut'])
+
+    logger.info(f"[Celery] Campagne {campagne_id} terminée : {succes} succès, {echecs} échecs.")

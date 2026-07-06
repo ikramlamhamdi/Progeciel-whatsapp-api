@@ -30,7 +30,7 @@ SECRET_KEY = os.getenv('SECRET_KEY')
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv('DEBUG', 'False') == 'True'
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['localhost', '127.0.0.1', 'pawing-clash-relieving.ngrok-free.dev','host.docker.internal']
 
 
 # Application definition
@@ -45,6 +45,7 @@ INSTALLED_APPS = [
     'campagnes',
     'rest_framework',
     'corsheaders',
+    'webhook',
 ]
 
 MIDDLEWARE = [
@@ -112,7 +113,7 @@ AUTH_PASSWORD_VALIDATORS = [
 # Internationalization
 # https://docs.djangoproject.com/en/5.2/topics/i18n/
 
-LANGUAGE_CODE = 'en-us'
+LANGUAGE_CODE ='fr-fr'
 
 TIME_ZONE = 'UTC'
 
@@ -129,12 +130,20 @@ STATIC_URL = 'static/'
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
-DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+DEFAULT_AUTO_FIELD='django.db.models.BigAutoField'
 CORS_ALLOW_ALL_ORIGINS = True
 # Configuration API WhatsApp
-WHATSAPP_TOKEN = os.getenv('WHATSAPP_TOKEN')
-WHATSAPP_PHONE_NUMBER_ID = os.getenv('WHATSAPP_PHONE_NUMBER_ID')
-WHATSAPP_WABA_ID = os.getenv('WHATSAPP_WABA_ID')
+WHATSAPP_TOKEN=os.getenv('WHATSAPP_TOKEN')
+WHATSAPP_PHONE_NUMBER_ID=os.getenv('WHATSAPP_PHONE_NUMBER_ID')
+WHATSAPP_WABA_ID=os.getenv('WHATSAPP_WABA_ID')
+WHATSAPP_APP_ID=os.getenv('WHATSAPP_APP_ID')
+META_GRAPH_VERSION=os.getenv('META_GRAPH_VERSION', 'v23.0')
+WHATSAPP_WEBHOOK_VERIFY_TOKEN=os.getenv('WHATSAPP_WEBHOOK_VERIFY_TOKEN')
+WHATSAPP_APP_SECRET = os.getenv("WHATSAPP_APP_SECRET")
+
+# Configuration n8n
+N8N_WEBHOOK_URL = os.getenv("N8N_WEBHOOK_URL", "")
+N8N_WEBHOOK_SECRET = os.getenv("N8N_WEBHOOK_SECRET", "")
 # ==================== CELERY + REDIS CONFIGURATION ====================
 
 # URL de Redis (broker = file d'attente)
@@ -156,3 +165,8 @@ CELERY_TIMEZONE = 'UTC'
 # Tier 1 : 1000 messages par 24h pour les messages business-initiated
 WHATSAPP_RATE_LIMIT = 1000  # messages par jour
 WHATSAPP_RATE_LIMIT_WINDOW = 86400  # 24h en secondes
+CSRF_TRUSTED_ORIGINS = [
+    'https://pawing-clash-relieving.ngrok-free.dev',
+]
+
+DEFAULT_CHARSET = 'utf-8'

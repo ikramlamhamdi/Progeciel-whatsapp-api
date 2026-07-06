@@ -6,3 +6,4 @@ requests
 celery
 redis
 python-dotenv
+

@@ -8,6 +8,7 @@ urlpatterns = [
     path('templates/creer/', views.creer_template, name='creer_template'),
     path('templates/synchroniser/', views.synchroniser_templates, name='synchroniser_templates'),
     path('templates/<int:template_id>/supprimer/', views.supprimer_template, name='supprimer_template'),
+    path('templates/<int:template_id>/modifier/', views.modifier_template, name='modifier-template'),
     path('templates/upload-header-media/', views.upload_header_media_template, name='upload_header_media_template'),
     # Upload média pour ENVOI (différent de l'upload pour création de template)
     path('upload-media-envoi/', views.upload_media_pour_envoi, name='upload_media_pour_envoi'),

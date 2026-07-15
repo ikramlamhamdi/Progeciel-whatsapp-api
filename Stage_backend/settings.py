@@ -30,8 +30,10 @@ SECRET_KEY = os.getenv('SECRET_KEY')
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.getenv('DEBUG', 'False') == 'True'
 
-ALLOWED_HOSTS = ['localhost', '127.0.0.1', 'pawing-clash-relieving.ngrok-free.dev','host.docker.internal']
-
+ALLOWED_HOSTS = os.getenv(
+    "ALLOWED_HOSTS",
+    "localhost,127.0.0.1"
+).split(",")
 
 # Application definition
 
@@ -165,8 +167,9 @@ CELERY_TIMEZONE = 'UTC'
 # Tier 1 : 1000 messages par 24h pour les messages business-initiated
 WHATSAPP_RATE_LIMIT = 1000  # messages par jour
 WHATSAPP_RATE_LIMIT_WINDOW = 86400  # 24h en secondes
-CSRF_TRUSTED_ORIGINS = [
-    'https://pawing-clash-relieving.ngrok-free.dev',
-]
+CSRF_TRUSTED_ORIGINS = os.getenv(
+    "CSRF_TRUSTED_ORIGINS",
+    ""
+).split(",") if os.getenv("CSRF_TRUSTED_ORIGINS") else []
 
 DEFAULT_CHARSET = 'utf-8'

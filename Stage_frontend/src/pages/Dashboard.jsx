@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import api from '../api/axios'
+import { useAutoRefresh } from '../hooks/useAutoRefresh'
 import {
     Users,
     FileText,
@@ -10,8 +11,23 @@ import {
     ArrowRight,
     Clock,
     RefreshCw,
-    AlertCircle
+    AlertCircle,
+    MessageCircle,
+    Bot,
+    UserCheck,
+    Inbox,
+    XCircle,
 } from 'lucide-react'
+
+const STATUTS_MESSAGES = [
+    { cle: 'nouveau', label: 'Nouveau', couleur: 'bg-blue-500', texte: 'text-blue-700', fond: 'bg-blue-50' },
+    { cle: 'lu', label: 'Lu', couleur: 'bg-sky-400', texte: 'text-sky-700', fond: 'bg-sky-50' },
+    { cle: 'en_traitement', label: 'En traitement', couleur: 'bg-amber-400', texte: 'text-amber-700', fond: 'bg-amber-50' },
+    { cle: 'repondu_auto', label: 'Répondu (IA)', couleur: 'bg-emerald-500', texte: 'text-emerald-700', fond: 'bg-emerald-50' },
+    { cle: 'repondu_manuel', label: 'Répondu (manuel)', couleur: 'bg-teal-500', texte: 'text-teal-700', fond: 'bg-teal-50' },
+    { cle: 'escalade', label: 'Escaladé', couleur: 'bg-rose-500', texte: 'text-rose-700', fond: 'bg-rose-50' },
+    { cle: 'echec', label: 'Échec technique', couleur: 'bg-gray-400', texte: 'text-gray-700', fond: 'bg-gray-50' },
+]
 
 function Dashboard() {
     const navigate = useNavigate()
@@ -22,7 +38,6 @@ function Dashboard() {
     const premierChargement = useRef(true)
 
     const chargerStats = useCallback(async () => {
-        // Defer : évite d'appeler les setState de façon synchrone dans l'effet
         await Promise.resolve()
 
         if (premierChargement.current) setLoading(true)
@@ -46,6 +61,21 @@ function Dashboard() {
 
             const escaladesActives = messages.filter(m => m.statut === 'escalade')
 
+            // Répartition des messages entrants par statut
+            const messagesParStatut = STATUTS_MESSAGES.reduce((acc, s) => {
+                acc[s.cle] = messages.filter(m => m.statut === s.cle).length
+                return acc
+            }, {})
+
+            // Taux d'automatisation : parmi les messages traités (auto ou manuel), part traitée par l'IA seule
+            const totalTraites = messagesParStatut.repondu_auto + messagesParStatut.repondu_manuel
+            const tauxAutomatisation = totalTraites > 0
+                ? ((messagesParStatut.repondu_auto / totalTraites) * 100).toFixed(1)
+                : null
+
+            // Messages nécessitant encore une action (pas encore traités définitivement)
+            const messagesEnAttente = messagesParStatut.nouveau + messagesParStatut.lu + messagesParStatut.en_traitement
+
             setStats({
                 templates: resTemplates.data.length,
                 templatesApprouves: resTemplates.data.filter(t => t.statut === 'approuve').length,
@@ -59,6 +89,9 @@ function Dashboard() {
                 derniersCampagnes: campagnes.slice(0, 5),
                 totalMessages: messages.length,
                 escaladesActives,
+                messagesParStatut,
+                tauxAutomatisation,
+                messagesEnAttente,
             })
         } catch (err) {
             const erreur = err.response?.data?.erreur || 'Erreur lors du chargement du dashboard.'
@@ -72,9 +105,10 @@ function Dashboard() {
 
     useEffect(() => {
         chargerStats()
-        const interval = setInterval(chargerStats, 60000)
-        return () => clearInterval(interval)
     }, [chargerStats])
+
+    // Auto-refresh toutes les 15s (au lieu du setInterval manuel précédent à 60s)
+    useAutoRefresh(chargerStats, 15000)
 
     const couleurStatut = (statut) => {
         const couleurs = {
@@ -104,6 +138,8 @@ function Dashboard() {
         </div>
     )
 
+    const totalMessagesPourBarre = stats.totalMessages || 0
+
     return (
         <div className="space-y-8">
             <div className="flex justify-between items-center">
@@ -121,7 +157,6 @@ function Dashboard() {
                 </button>
             </div>
 
-            {/* Alerte escalades en attente */}
             {stats.escaladesActives.length > 0 && (
                 <div className="flex items-center justify-between p-4 bg-amber-50 border border-amber-200 rounded-xl">
                     <div className="flex items-center gap-3">
@@ -144,7 +179,7 @@ function Dashboard() {
                 </div>
             )}
 
-            {/* Cartes statistiques */}
+            {/* Cartes principales */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                 <StatCard
                     titre="Templates"
@@ -180,9 +215,9 @@ function Dashboard() {
                 />
             </div>
 
-            {/* Statistiques globales */}
+            {/* Stats campagnes (envoi) */}
             <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
-                <h2 className="text-lg font-semibold text-gray-800 mb-4">Statistiques globales</h2>
+                <h2 className="text-lg font-semibold text-gray-800 mb-4">Statistiques d'envoi (campagnes)</h2>
                 <div className="grid grid-cols-3 gap-4">
                     <div className="text-center">
                         <p className="text-3xl font-bold text-blue-600">{stats.totalEnvoyes.toLocaleString()}</p>
@@ -196,6 +231,87 @@ function Dashboard() {
                         <p className="text-3xl font-bold text-rose-500">{stats.totalEchecs.toLocaleString()}</p>
                         <p className="text-sm text-gray-500 mt-1">Échecs</p>
                     </div>
+                </div>
+            </div>
+
+            {/* Stats messages entrants */}
+            <div className="bg-white rounded-xl border border-gray-200 p-6 shadow-sm">
+                <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-lg font-semibold text-gray-800">Messages entrants</h2>
+                    <Link
+                        to="/messages"
+                        className="text-sm text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1"
+                    >
+                        Voir tout <ArrowRight className="w-4 h-4" />
+                    </Link>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                    <div className="flex items-center gap-3 bg-gray-50 rounded-lg p-4 border border-gray-100">
+                        <div className="p-2 bg-gray-200 rounded-lg">
+                            <Inbox className="w-5 h-5 text-gray-600" />
+                        </div>
+                        <div>
+                            <p className="text-xl font-bold text-gray-800">{stats.totalMessages}</p>
+                            <p className="text-xs text-gray-500">Total reçus</p>
+                        </div>
+                    </div>
+                    <div className="flex items-center gap-3 bg-emerald-50 rounded-lg p-4 border border-emerald-100">
+                        <div className="p-2 bg-emerald-200 rounded-lg">
+                            <Bot className="w-5 h-5 text-emerald-700" />
+                        </div>
+                        <div>
+                            <p className="text-xl font-bold text-emerald-700">
+                                {stats.tauxAutomatisation !== null ? `${stats.tauxAutomatisation}%` : '—'}
+                            </p>
+                            <p className="text-xs text-gray-500">Taux d'automatisation IA</p>
+                        </div>
+                    </div>
+                    <div className="flex items-center gap-3 bg-amber-50 rounded-lg p-4 border border-amber-100">
+                        <div className="p-2 bg-amber-200 rounded-lg">
+                            <Clock className="w-5 h-5 text-amber-700" />
+                        </div>
+                        <div>
+                            <p className="text-xl font-bold text-amber-700">{stats.messagesEnAttente}</p>
+                            <p className="text-xs text-gray-500">En attente de traitement</p>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Barre de répartition visuelle */}
+                {totalMessagesPourBarre > 0 && (
+                    <div className="mb-5">
+                        <div className="flex w-full h-3 rounded-full overflow-hidden bg-gray-100">
+                            {STATUTS_MESSAGES.map((s) => {
+                                const count = stats.messagesParStatut[s.cle] || 0
+                                const pourcentage = (count / totalMessagesPourBarre) * 100
+                                if (pourcentage === 0) return null
+                                return (
+                                    <div
+                                        key={s.cle}
+                                        className={s.couleur}
+                                        style={{ width: `${pourcentage}%` }}
+                                        title={`${s.label} : ${count}`}
+                                    />
+                                )
+                            })}
+                        </div>
+                    </div>
+                )}
+
+                {/* Compteurs détaillés par statut */}
+                <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3">
+                    {STATUTS_MESSAGES.map((s) => (
+                        <div key={s.cle} className={`rounded-lg p-3 border border-gray-100 ${s.fond}`}>
+                            <div className="flex items-center gap-1.5 mb-1">
+                                <span className={`w-2 h-2 rounded-full ${s.couleur}`} />
+                                <span className={`text-xs font-medium ${s.texte}`}>{s.label}</span>
+                            </div>
+                            <p className={`text-lg font-bold ${s.texte}`}>
+                                {stats.messagesParStatut[s.cle] || 0}
+                            </p>
+                        </div>
+                    ))}
                 </div>
             </div>
 

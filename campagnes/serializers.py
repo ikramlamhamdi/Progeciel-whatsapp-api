@@ -29,6 +29,11 @@ class TemplateWhatsAppSerializer(serializers.ModelSerializer):
             'description',
             'date_creation_meta',
             'date_approbation',
+            'template_id_meta',
+            'add_security_recommendation',
+            'code_expiration_minutes',
+            'otp_type',
+            'otp_button_text',
         ]
 
 

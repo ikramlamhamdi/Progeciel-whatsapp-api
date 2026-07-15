@@ -69,6 +69,7 @@ def construire_payload(template, numero, variables=None, header_url=None, header
     components = []
 
     if template.type_header == 'TEXT' and template.contenu_header:
+        # Aucun paramètre à envoyer pour un header texte fixe
         pass
 
     elif template.type_header in ('IMAGE', 'VIDEO', 'DOCUMENT') and (header_media_id or header_url):
@@ -97,21 +98,18 @@ def construire_payload(template, numero, variables=None, header_url=None, header
             ]
         })
 
-    boutons_url_dynamiques = []
+
     for bouton in template.boutons.all():
         if bouton.type_bouton == 'URL' and '{{1}}' in (bouton.url or ''):
-            boutons_url_dynamiques.append(bouton)
-
-    for index, bouton in enumerate(boutons_url_dynamiques):
-        suffixe_url = str(variables[-1]) if variables else ''
-        components.append({
-            "type": "button",
-            "sub_type": "url",
-            "index": str(index),
-            "parameters": [
-                {"type": "text", "text": suffixe_url}
-            ]
-        })
+            suffixe_url = str(variables[-1]) if variables else ''
+            components.append({
+                "type": "button",
+                "sub_type": "url",
+                "index": str(bouton.ordre - 1),
+                "parameters": [
+                    {"type": "text", "text": suffixe_url}
+                ]
+            })
 
     if components:
         payload["template"]["components"] = components

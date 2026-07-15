@@ -5,6 +5,7 @@ import {
     Plus,
     X,
     Trash2,
+    Pencil,
     Image as ImageIcon,
     Video,
     FileText,
@@ -21,7 +22,7 @@ import {
 } from 'lucide-react'
 
 const TYPES_HEADER_MEDIA = ['IMAGE', 'VIDEO', 'DOCUMENT']
-
+const EST_AUTH = form => form.categorie === 'AUTHENTICATION'
 const FORM_INITIAL = {
     nom: '',
     categorie: 'MARKETING',
@@ -266,7 +267,7 @@ function CarteTemplate({ template, onOuvrir, onSupprimer }) {
 }
 
 // ── Panneau détail ──────────────────────────────────────────
-function DetailTemplate({ template, onClose, onSupprimer }) {
+function DetailTemplate({ template, onClose, onSupprimer, onModifier }) {
     const handleSupprimer = async () => {
         const succes = await onSupprimer(template.id)
         if (succes) onClose()
@@ -301,6 +302,13 @@ function DetailTemplate({ template, onClose, onSupprimer }) {
                         <X className="w-6 h-6" />
                     </button>
                 </div>
+
+                {!template.template_id_meta && (
+                    <div className="mb-5 rounded-lg bg-orange-50 border border-orange-200 p-3 text-sm text-orange-700">
+                        Ce template n'a pas d'ID Meta enregistré (créé avant l'ajout de la modification).
+                        Cliquez sur <strong>Synchroniser</strong> depuis la liste avant de pouvoir le modifier.
+                    </div>
+                )}
 
                 <div className="grid grid-cols-3 gap-3 mb-6">
                     <div className="bg-blue-50 rounded-lg p-4 border border-blue-100 text-center">
@@ -408,6 +416,14 @@ function DetailTemplate({ template, onClose, onSupprimer }) {
                             Fermer
                         </button>
                         <button
+                            onClick={() => onModifier(template)}
+                            disabled={!template.template_id_meta}
+                            title={!template.template_id_meta ? 'Synchronisez d\'abord ce template' : ''}
+                            className="flex items-center gap-2 px-4 py-2.5 bg-blue-50 text-blue-600 rounded-lg text-sm font-medium hover:bg-blue-100 border border-blue-200 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                        >
+                            <Pencil className="w-4 h-4" /> Modifier
+                        </button>
+                        <button
                             onClick={handleSupprimer}
                             className="flex items-center gap-2 px-4 py-2.5 bg-red-50 text-red-600 rounded-lg text-sm font-medium hover:bg-red-100 border border-red-200 transition-colors"
                         >
@@ -415,6 +431,399 @@ function DetailTemplate({ template, onClose, onSupprimer }) {
                         </button>
                     </div>
                 </div>
+            </div>
+        </div>
+    )
+}
+
+// ── Panneau modification (édition + resoumission à Meta) ────
+function ModifierTemplate({ template, onClose, onSuccess }) {
+    const estAuth = template.categorie === 'AUTHENTICATION'
+    const [form, setForm] = useState({
+        type_header: template.type_header || 'NONE',
+        contenu_header: template.contenu_header || '',
+        header_handle: '',
+        contenu_body: template.contenu_body || '',
+        contenu_footer: template.contenu_footer || '',
+        exemples_variables: (template.exemples_variables_body || []).join(', '),
+        boutons: (template.boutons || []).map((b) => ({
+            type_bouton: b.type_bouton,
+            texte: b.texte,
+            url: b.url || '',
+            numero_telephone: b.numero_telephone || '',
+        })),
+        // Champs AUTHENTICATION : maintenant lus depuis les vraies valeurs stockées
+        add_security_recommendation: template.add_security_recommendation ?? true,
+        code_expiration_minutes: template.code_expiration_minutes ?? 10,
+        otp_type: template.otp_type || 'COPY_CODE',
+        otp_button_text: template.otp_button_text || 'Copier le code',
+    })
+    const [headerFile, setHeaderFile] = useState(null)
+    const [uploadLoading, setUploadLoading] = useState(false)
+    const [envoiLoading, setEnvoiLoading] = useState(false)
+    const [erreur, setErreur] = useState(null)
+
+    const headerEstMedia = TYPES_HEADER_MEDIA.includes(form.type_header)
+
+    const handleChange = (e) => {
+        const { name, value } = e.target
+        setForm((prev) => ({
+            ...prev,
+            [name]: value,
+            ...(name === 'type_header' && value !== 'TEXT' ? { contenu_header: '' } : {}),
+            ...(name === 'type_header' && !TYPES_HEADER_MEDIA.includes(value) ? { header_handle: '' } : {}),
+        }))
+        if (name === 'type_header') setHeaderFile(null)
+    }
+
+    const uploadHeaderMedia = async () => {
+        if (!headerFile) {
+            setErreur('Choisissez un nouveau fichier header avant l\'upload.')
+            return
+        }
+        setUploadLoading(true)
+        setErreur(null)
+        try {
+            const data = new FormData()
+            data.append('fichier', headerFile)
+            data.append('type_header', form.type_header)
+            const res = await api.post('/templates/upload-header-media/', data, {
+                headers: { 'Content-Type': 'multipart/form-data' },
+            })
+            setForm((prev) => ({
+                ...prev,
+                type_header: res.data.type_header || prev.type_header,
+                header_handle: res.data.header_handle,
+            }))
+        } catch (err) {
+            setErreur(messageErreurApi(err, 'Erreur lors de l\'upload du média.'))
+        } finally {
+            setUploadLoading(false)
+        }
+    }
+
+    const handleBoutonChange = (index, field, value) => {
+        const boutons = [...form.boutons]
+        boutons[index] = { ...boutons[index], [field]: value }
+        setForm({ ...form, boutons })
+    }
+
+    const ajouterBouton = () => {
+        if (form.boutons.length >= 3) return
+        setForm({ ...form, boutons: [...form.boutons, { ...BOUTON_VIDE }] })
+    }
+
+    const supprimerBouton = (index) => {
+        setForm({ ...form, boutons: form.boutons.filter((_, i) => i !== index) })
+    }
+
+    const normaliserBoutons = () => {
+        return form.boutons
+            .filter((b) => b.texte.trim())
+            .map((b, index) => ({
+                ordre: index + 1,
+                type_bouton: b.type_bouton,
+                texte: b.texte.trim(),
+                url: b.type_bouton === 'URL' ? b.url.trim() : '',
+                numero_telephone: b.type_bouton === 'PHONE_NUMBER' ? b.numero_telephone.trim() : '',
+            }))
+    }
+
+    const handleSubmit = async (e) => {
+        e.preventDefault()
+        setErreur(null)
+
+        if (headerEstMedia && !form.header_handle) {
+            setErreur('Uploadez le nouveau média header pour obtenir un header_handle, ou repassez en header NONE/TEXT si vous ne changez pas le média.')
+            return
+        }
+
+        setEnvoiLoading(true)
+        try {
+            const payload = estAuth
+                ? {
+                    add_security_recommendation: form.add_security_recommendation,
+                    code_expiration_minutes: form.code_expiration_minutes,
+                    otp_type: form.otp_type,
+                    otp_button_text: form.otp_button_text,
+                }
+                : {
+                    type_header: form.type_header,
+                    contenu_header: form.type_header === 'TEXT' ? form.contenu_header : '',
+                    header_handle: headerEstMedia ? form.header_handle : '',
+                    contenu_body: form.contenu_body,
+                    contenu_footer: form.contenu_footer,
+                    exemples_variables: form.exemples_variables
+                        ? form.exemples_variables.split(',').map((v) => v.trim()).filter(Boolean)
+                        : [],
+                    boutons: normaliserBoutons(),
+                }
+            const res = await api.patch(`/templates/${template.id}/modifier/`, payload)
+            onSuccess(res.data.message || 'Modification soumise à Meta avec succès.')
+        } catch (err) {
+            setErreur(messageErreurApi(err, 'Erreur lors de la modification.'))
+        } finally {
+            setEnvoiLoading(false)
+        }
+    }
+
+    return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={onClose}>
+            <div
+                className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6"
+                onClick={(e) => e.stopPropagation()}
+            >
+                <div className="flex items-start justify-between mb-5 pb-4 border-b border-gray-200">
+                    <div>
+                        <h2 className="text-xl font-bold text-gray-800">Modifier "{template.nom}"</h2>
+                        <p className="text-xs text-gray-400 mt-1">
+                            Nom et langue ne sont pas modifiables (contrainte Meta). La modification repasse le template en attente de re-approbation.
+                        </p>
+                    </div>
+                    <button onClick={onClose} className="text-gray-400 hover:text-gray-600 p-2 rounded-lg hover:bg-gray-100 transition-colors">
+                        <X className="w-6 h-6" />
+                    </button>
+                </div>
+
+                {erreur && (
+                    <div className="mb-4 px-4 py-3 rounded-lg text-sm font-medium bg-red-50 text-red-700 border border-red-200">
+                        {erreur}
+                    </div>
+                )}
+
+                {estAuth ? (
+                    <div className="rounded-lg bg-indigo-50 border border-indigo-200 p-3 text-sm text-indigo-700 mb-4">
+                        Template AUTHENTICATION : seuls les paramètres OTP sont modifiables, le format du message reste imposé par Meta.
+
+                    </div>
+                ) : null}
+
+                <form onSubmit={handleSubmit} className="grid grid-cols-2 gap-4">
+                    {estAuth ? (
+                        <>
+                            <div className="col-span-2">
+                                <label className="flex items-center gap-2 text-sm text-gray-700">
+                                    <input
+                                        type="checkbox"
+                                        checked={form.add_security_recommendation}
+                                        onChange={(e) => setForm({ ...form, add_security_recommendation: e.target.checked })}
+                                        className="accent-green-500"
+                                    />
+                                    Ajouter la recommandation de sécurité
+                                </label>
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Expiration du code (minutes)</label>
+                                <input
+                                    type="number"
+                                    min="1"
+                                    value={form.code_expiration_minutes}
+                                    onChange={(e) => setForm({ ...form, code_expiration_minutes: e.target.value })}
+                                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-400"
+                                />
+                            </div>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Type OTP</label>
+                                <select
+                                    value={form.otp_type}
+                                    onChange={(e) => setForm({ ...form, otp_type: e.target.value })}
+                                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-400"
+                                >
+                                    <option value="COPY_CODE">Copy Code</option>
+                                    <option value="ONE_TAP">One Tap</option>
+                                    <option value="ZERO_TAP">Zero Tap</option>
+                                </select>
+                            </div>
+                            <div className="col-span-2">
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Texte du bouton OTP</label>
+                                <input
+                                    value={form.otp_button_text}
+                                    onChange={(e) => setForm({ ...form, otp_button_text: e.target.value })}
+                                    maxLength={25}
+                                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-400"
+                                />
+                            </div>
+                        </>
+                    ) : (
+                        <>
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Type de header</label>
+                                <select
+                                    name="type_header"
+                                    value={form.type_header}
+                                    onChange={handleChange}
+                                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-400"
+                                >
+                                    <option value="NONE">Aucun</option>
+                                    <option value="TEXT">Texte</option>
+                                    <option value="IMAGE">Image</option>
+                                    <option value="VIDEO">Vidéo</option>
+                                    <option value="DOCUMENT">Document</option>
+                                </select>
+                            </div>
+
+                            {form.type_header === 'TEXT' && (
+                                <div className="col-span-2">
+                                    <label className="block text-sm font-medium text-gray-700 mb-1">Texte du header</label>
+                                    <input
+                                        name="contenu_header"
+                                        value={form.contenu_header}
+                                        onChange={handleChange}
+                                        placeholder="ex: Offre spéciale !"
+                                        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-400"
+                                    />
+                                </div>
+                            )}
+
+                            {headerEstMedia && (
+                                <div className="col-span-2 grid grid-cols-3 gap-3">
+                                    <div className="col-span-2">
+                                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                                            Nouveau fichier header
+                                            <span className="text-xs font-normal text-gray-400 ml-1">
+                                                (obligatoire si vous changez ou gardez un header {form.type_header})
+                                            </span>
+                                        </label>
+                                        <input
+                                            type="file"
+                                            onChange={(e) => {
+                                                setHeaderFile(e.target.files?.[0] || null)
+                                                setForm((prev) => ({ ...prev, header_handle: '' }))
+                                            }}
+                                            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm bg-white"
+                                        />
+                                    </div>
+                                    <div className="flex items-end">
+                                        <button
+                                            type="button"
+                                            onClick={uploadHeaderMedia}
+                                            disabled={uploadLoading || !headerFile}
+                                            className="w-full px-4 py-2 bg-gray-800 text-white rounded-lg text-sm font-medium hover:bg-gray-900 disabled:opacity-50"
+                                        >
+                                            {uploadLoading ? 'Upload...' : 'Uploader'}
+                                        </button>
+                                    </div>
+                                    {form.header_handle && (
+                                        <div className="col-span-3 text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
+                                            Nouveau header handle Meta généré.
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            <div className="col-span-2">
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Body</label>
+                                <textarea
+                                    name="contenu_body"
+                                    value={form.contenu_body}
+                                    onChange={handleChange}
+                                    placeholder="ex: Bonjour {{1}}, profitez de {{2}}% de réduction."
+                                    required
+                                    rows={3}
+                                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-400"
+                                />
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Footer</label>
+                                <input
+                                    name="contenu_footer"
+                                    value={form.contenu_footer}
+                                    onChange={handleChange}
+                                    placeholder="ex: Répondez STOP pour vous désabonner."
+                                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-400"
+                                />
+                            </div>
+
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">Exemples variables</label>
+                                <input
+                                    name="exemples_variables"
+                                    value={form.exemples_variables}
+                                    onChange={handleChange}
+                                    placeholder="ex: Ikram, 30"
+                                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-400"
+                                />
+                            </div>
+
+                            <div className="col-span-2 border-t border-gray-100 pt-4">
+                                <div className="flex items-center justify-between mb-3">
+                                    <h3 className="text-sm font-semibold text-gray-800">Boutons</h3>
+                                    <button
+                                        type="button"
+                                        onClick={ajouterBouton}
+                                        disabled={form.boutons.length >= 3}
+                                        className="px-3 py-1.5 bg-gray-100 text-gray-700 rounded-lg text-sm hover:bg-gray-200 disabled:opacity-50"
+                                    >
+                                        + Ajouter bouton
+                                    </button>
+                                </div>
+                                <div className="grid gap-3">
+                                    {form.boutons.map((bouton, index) => (
+                                        <div key={index} className="grid grid-cols-4 gap-3 bg-gray-50 border border-gray-100 rounded-lg p-3">
+                                            <select
+                                                value={bouton.type_bouton}
+                                                onChange={(e) => handleBoutonChange(index, 'type_bouton', e.target.value)}
+                                                className="border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                                            >
+                                                <option value="QUICK_REPLY">Réponse rapide</option>
+                                                <option value="URL">Lien</option>
+                                                <option value="PHONE_NUMBER">Téléphone</option>
+                                            </select>
+                                            <input
+                                                value={bouton.texte}
+                                                onChange={(e) => handleBoutonChange(index, 'texte', e.target.value)}
+                                                placeholder="Texte"
+                                                className="border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                                            />
+                                            {bouton.type_bouton === 'URL' && (
+                                                <input
+                                                    value={bouton.url}
+                                                    onChange={(e) => handleBoutonChange(index, 'url', e.target.value)}
+                                                    placeholder="https://example.com"
+                                                    className="border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                                                />
+                                            )}
+                                            {bouton.type_bouton === 'PHONE_NUMBER' && (
+                                                <input
+                                                    value={bouton.numero_telephone}
+                                                    onChange={(e) => handleBoutonChange(index, 'numero_telephone', e.target.value)}
+                                                    placeholder="+212612345678"
+                                                    className="border border-gray-200 rounded-lg px-3 py-2 text-sm"
+                                                />
+                                            )}
+                                            {bouton.type_bouton === 'QUICK_REPLY' && <div />}
+                                            <button
+                                                type="button"
+                                                onClick={() => supprimerBouton(index)}
+                                                className="px-3 py-2 bg-red-50 text-red-600 rounded-lg text-sm hover:bg-red-100"
+                                            >
+                                                Supprimer
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        </>
+                    )}
+
+                    <div className="col-span-2 flex justify-end gap-3 pt-2">
+                        <button
+                            type="button"
+                            onClick={onClose}
+                            className="px-4 py-2 bg-gray-100 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-200 transition-colors"
+                        >
+                            Annuler
+                        </button>
+                        <button
+                            type="submit"
+                            disabled={envoiLoading || uploadLoading}
+                            className="px-6 py-2 bg-green-500 text-white rounded-lg text-sm font-medium hover:bg-green-600 disabled:opacity-50 transition-colors"
+                        >
+                            {envoiLoading ? 'Envoi à Meta...' : 'Soumettre la modification'}
+                        </button>
+                    </div>
+                </form>
             </div>
         </div>
     )
@@ -431,9 +840,11 @@ function Templates() {
     const [headerFile, setHeaderFile] = useState(null)
     const [form, setForm] = useState(FORM_INITIAL)
     const [templateDetail, setTemplateDetail] = useState(null)
+    const [templateAModifier, setTemplateAModifier] = useState(null)
     const [filtres, setFiltres] = useState(FILTRES_INITIAL)
 
     const headerEstMedia = TYPES_HEADER_MEDIA.includes(form.type_header)
+    const estAuthentication = EST_AUTH(form)
 
     const chargerTemplates = async () => {
         setLoading(true)
@@ -557,20 +968,26 @@ function Templates() {
             return
         }
         try {
-            const payload = {
-                nom: form.nom,
-                categorie: form.categorie,
-                langue: form.langue,
-                type_header: form.type_header,
-                contenu_header: form.type_header === 'TEXT' ? form.contenu_header : '',
-                header_handle: headerEstMedia ? form.header_handle : '',
-                contenu_body: form.contenu_body,
-                contenu_footer: form.contenu_footer,
-                exemples_variables: form.exemples_variables
-                    ? form.exemples_variables.split(',').map((v) => v.trim()).filter(Boolean)
-                    : [],
-                boutons: normaliserBoutons(),
-            }
+            const payload = estAuthentication
+                ? {
+                    nom: form.nom,
+                    categorie: form.categorie,
+                    langue: form.langue,
+                }
+                : {
+                    nom: form.nom,
+                    categorie: form.categorie,
+                    langue: form.langue,
+                    type_header: form.type_header,
+                    contenu_header: form.type_header === 'TEXT' ? form.contenu_header : '',
+                    header_handle: headerEstMedia ? form.header_handle : '',
+                    contenu_body: form.contenu_body,
+                    contenu_footer: form.contenu_footer,
+                    exemples_variables: form.exemples_variables
+                        ? form.exemples_variables.split(',').map((v) => v.trim()).filter(Boolean)
+                        : [],
+                    boutons: normaliserBoutons(),
+                }
             await api.post('/templates/creer/', payload)
             setMessage({ type: 'success', text: 'Template soumis à Meta avec succès !' })
             setShowForm(false)
@@ -594,6 +1011,17 @@ function Templates() {
             setMessage({ type: 'error', text: messageErreurApi(err, 'Erreur lors de la suppression.') })
             return false
         }
+    }
+
+    const ouvrirModification = (template) => {
+        setTemplateDetail(null)
+        setTemplateAModifier(template)
+    }
+
+    const surSuccesModification = async (texteMessage) => {
+        setTemplateAModifier(null)
+        setMessage({ type: 'success', text: texteMessage })
+        await chargerTemplates()
     }
 
     // Valeurs disponibles pour les selects, dérivées des templates réellement présents
@@ -631,6 +1059,15 @@ function Templates() {
                     template={templateDetail}
                     onClose={() => setTemplateDetail(null)}
                     onSupprimer={supprimerTemplate}
+                    onModifier={ouvrirModification}
+                />
+            )}
+
+            {templateAModifier && (
+                <ModifierTemplate
+                    template={templateAModifier}
+                    onClose={() => setTemplateAModifier(null)}
+                    onSuccess={surSuccesModification}
                 />
             )}
 
@@ -686,6 +1123,13 @@ function Templates() {
                                 <option value="AUTHENTICATION">AUTHENTICATION</option>
                             </select>
                         </div>
+                        {estAuthentication && (
+                            <div className="col-span-2 rounded-lg bg-indigo-50 border border-indigo-200 p-3 text-sm text-indigo-700">
+                                Les templates AUTHENTICATION utilisent le format OTP imposé par Meta.
+                                Le contenu, le footer, les boutons et le header sont générés automatiquement par le serveur.
+                                Il suffit de renseigner le nom et la langue.
+                            </div>
+                        )}
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">Langue</label>
                             <input name="langue" value={form.langue} onChange={handleChange} placeholder="ex: fr, en_US, ar"
@@ -693,8 +1137,12 @@ function Templates() {
                         </div>
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">Type de header</label>
-                            <select name="type_header" value={form.type_header} onChange={handleChange}
-                                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-400">
+                            <select
+                                name="type_header"
+                                value={estAuthentication ? "NONE" : form.type_header}
+                                onChange={handleChange}
+                                disabled={estAuthentication}
+                                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-400">
                                 <option value="NONE">Aucun</option>
                                 <option value="TEXT">Texte</option>
                                 <option value="IMAGE">Image</option>
@@ -702,14 +1150,14 @@ function Templates() {
                                 <option value="DOCUMENT">Document</option>
                             </select>
                         </div>
-                        {form.type_header === 'TEXT' && (
+                        {!estAuthentication && form.type_header === 'TEXT' && (
                             <div className="col-span-2">
                                 <label className="block text-sm font-medium text-gray-700 mb-1">Texte du header</label>
                                 <input name="contenu_header" value={form.contenu_header} onChange={handleChange} placeholder="ex: Offre spéciale !"
                                        className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-400" />
                             </div>
                         )}
-                        {headerEstMedia && (
+                        {!estAuthentication && headerEstMedia && (
                             <div className="col-span-2 grid grid-cols-3 gap-3">
                                 <div className="col-span-2">
                                     <label className="block text-sm font-medium text-gray-700 mb-1">Fichier header</label>
@@ -731,56 +1179,59 @@ function Templates() {
                         )}
                         <div className="col-span-2">
                             <label className="block text-sm font-medium text-gray-700 mb-1">Body</label>
-                            <textarea name="contenu_body" value={form.contenu_body} onChange={handleChange}
-                                      placeholder="ex: Bonjour {{1}}, profitez de {{2}}% de réduction." required rows={3}
+                            <textarea name="contenu_body" disabled={estAuthentication} value={form.contenu_body} onChange={handleChange}
+                                      placeholder={ estAuthentication
+                                          ? "Le body est généré automatiquement pour les templates AUTHENTICATION."
+                                          : "ex: Bonjour {{1}}, profitez de {{2}}% de réduction."} required={!estAuthentication} rows={3}
                                       className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-400" />
                         </div>
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">Footer</label>
-                            <input name="contenu_footer" value={form.contenu_footer} onChange={handleChange} placeholder="ex: Répondez STOP pour vous désabonner."
+                            <input name="contenu_footer" disabled={estAuthentication} value={form.contenu_footer} onChange={handleChange} placeholder="ex: Répondez STOP pour vous désabonner."
                                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-400" />
                         </div>
                         <div>
                             <label className="block text-sm font-medium text-gray-700 mb-1">Exemples variables</label>
-                            <input name="exemples_variables" value={form.exemples_variables} onChange={handleChange} placeholder="ex: Ikram, 30"
+                            <input name="exemples_variables" disabled={estAuthentication} value={form.exemples_variables} onChange={handleChange} placeholder="ex: Ikram, 30"
                                    className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-400" />
                         </div>
-                        <div className="col-span-2 border-t border-gray-100 pt-4">
-                            <div className="flex items-center justify-between mb-3">
-                                <h3 className="text-sm font-semibold text-gray-800">Boutons</h3>
-                                <button type="button" onClick={ajouterBouton} disabled={form.boutons.length >= 3}
-                                        className="px-3 py-1.5 bg-gray-100 text-gray-700 rounded-lg text-sm hover:bg-gray-200 disabled:opacity-50">
-                                    + Ajouter bouton
-                                </button>
-                            </div>
-                            <div className="grid gap-3">
-                                {form.boutons.map((bouton, index) => (
-                                    <div key={index} className="grid grid-cols-4 gap-3 bg-gray-50 border border-gray-100 rounded-lg p-3">
-                                        <select value={bouton.type_bouton} onChange={(e) => handleBoutonChange(index, 'type_bouton', e.target.value)}
-                                                className="border border-gray-200 rounded-lg px-3 py-2 text-sm">
-                                            <option value="QUICK_REPLY">Réponse rapide</option>
-                                            <option value="URL">Lien</option>
-                                            <option value="PHONE_NUMBER">Téléphone</option>
-                                        </select>
-                                        <input value={bouton.texte} onChange={(e) => handleBoutonChange(index, 'texte', e.target.value)}
-                                               placeholder="Texte" className="border border-gray-200 rounded-lg px-3 py-2 text-sm" />
-                                        {bouton.type_bouton === 'URL' && (
-                                            <input value={bouton.url} onChange={(e) => handleBoutonChange(index, 'url', e.target.value)}
-                                                   placeholder="https://example.com" className="border border-gray-200 rounded-lg px-3 py-2 text-sm" />
-                                        )}
-                                        {bouton.type_bouton === 'PHONE_NUMBER' && (
-                                            <input value={bouton.numero_telephone} onChange={(e) => handleBoutonChange(index, 'numero_telephone', e.target.value)}
-                                                   placeholder="+212612345678" className="border border-gray-200 rounded-lg px-3 py-2 text-sm" />
-                                        )}
-                                        {bouton.type_bouton === 'QUICK_REPLY' && <div />}
-                                        <button type="button" onClick={() => supprimerBouton(index)}
-                                                className="px-3 py-2 bg-red-50 text-red-600 rounded-lg text-sm hover:bg-red-100">
-                                            Supprimer
-                                        </button>
-                                    </div>
-                                ))}
-                            </div>
-                        </div>
+                        {!estAuthentication && (
+                            <div className="col-span-2 border-t border-gray-100 pt-4">
+                                <div className="flex items-center justify-between mb-3">
+                                    <h3 className="text-sm font-semibold text-gray-800">Boutons</h3>
+                                    <button type="button" onClick={ajouterBouton} disabled={form.boutons.length >= 3}
+                                            className="px-3 py-1.5 bg-gray-100 text-gray-700 rounded-lg text-sm hover:bg-gray-200 disabled:opacity-50">
+                                        + Ajouter bouton
+                                    </button>
+                                </div>
+                                <div className="grid gap-3">
+                                    {form.boutons.map((bouton, index) => (
+                                        <div key={index} className="grid grid-cols-4 gap-3 bg-gray-50 border border-gray-100 rounded-lg p-3">
+                                            <select value={bouton.type_bouton} onChange={(e) => handleBoutonChange(index, 'type_bouton', e.target.value)}
+                                                    className="border border-gray-200 rounded-lg px-3 py-2 text-sm">
+                                                <option value="QUICK_REPLY">Réponse rapide</option>
+                                                <option value="URL">Lien</option>
+                                                <option value="PHONE_NUMBER">Téléphone</option>
+                                            </select>
+                                            <input value={bouton.texte} onChange={(e) => handleBoutonChange(index, 'texte', e.target.value)}
+                                                   placeholder="Texte" className="border border-gray-200 rounded-lg px-3 py-2 text-sm" />
+                                            {bouton.type_bouton === 'URL' && (
+                                                <input value={bouton.url} onChange={(e) => handleBoutonChange(index, 'url', e.target.value)}
+                                                       placeholder="https://example.com" className="border border-gray-200 rounded-lg px-3 py-2 text-sm" />
+                                            )}
+                                            {bouton.type_bouton === 'PHONE_NUMBER' && (
+                                                <input value={bouton.numero_telephone} onChange={(e) => handleBoutonChange(index, 'numero_telephone', e.target.value)}
+                                                       placeholder="+212612345678" className="border border-gray-200 rounded-lg px-3 py-2 text-sm" />
+                                            )}
+                                            {bouton.type_bouton === 'QUICK_REPLY' && <div />}
+                                            <button type="button" onClick={() => supprimerBouton(index)}
+                                                    className="px-3 py-2 bg-red-50 text-red-600 rounded-lg text-sm hover:bg-red-100">
+                                                Supprimer
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>)}
                         <div className="col-span-2 flex justify-end">
                             <button type="submit" disabled={formLoading || uploadLoading}
                                     className="px-6 py-2 bg-green-500 text-white rounded-lg text-sm font-medium hover:bg-green-600 disabled:opacity-50 transition-colors">

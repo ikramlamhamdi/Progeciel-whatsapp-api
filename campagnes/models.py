@@ -35,6 +35,13 @@ class TemplateWhatsApp(models.Model):
     categorie = models.CharField(max_length=20, choices=CATEGORIE_CHOICES, verbose_name="Catégorie")
     langue = models.CharField(max_length=10, default='en_US', verbose_name="Code langue")
     statut = models.CharField(max_length=20, choices=STATUT_CHOICES, default='en_attente', verbose_name="Statut Meta")
+    template_id_meta = models.CharField(
+        max_length=50,
+        blank=True,
+        null=True,
+        verbose_name="ID Meta du template",
+        help_text="ID retourné par Meta à la création (obligatoire pour éditer le template ensuite)."
+    )
 
     type_header = models.CharField(
         max_length=20,
@@ -58,7 +65,9 @@ class TemplateWhatsApp(models.Model):
 
     contenu_body = models.TextField(
         verbose_name="Contenu du body",
-        help_text="Ex: Bonjour {{1}}, votre commande {{2}} est prête."
+        help_text="Ex: Bonjour {{1}}, votre commande {{2}} est prête.",
+        blank=True,
+        default=""
     )
     nombre_variables = models.PositiveIntegerField(
         default=0,
@@ -77,6 +86,38 @@ class TemplateWhatsApp(models.Model):
         verbose_name="Contenu du footer",
         help_text="Texte optionnel affiché sous le body. Max 60 caractères."
     )
+    # ==========================
+    # Champs spécifiques AUTHENTICATION
+    # ==========================
+
+    add_security_recommendation = models.BooleanField(
+        default=True,
+        verbose_name="Ajouter la recommandation de sécurité"
+    )
+
+    code_expiration_minutes = models.PositiveSmallIntegerField(
+        default=10,
+        blank=True,
+        null=True,
+        verbose_name="Durée d'expiration du code"
+    )
+
+    OTP_TYPE_CHOICES = [
+        ('COPY_CODE', 'Copy Code'),
+        ('ONE_TAP', 'One Tap'),
+        ('ZERO_TAP', 'Zero Tap'),
+    ]
+
+    otp_type = models.CharField(
+        max_length=20,
+        choices=OTP_TYPE_CHOICES,
+        default='COPY_CODE'
+    )
+
+    otp_button_text = models.CharField(
+        max_length=25,
+        default='Copier le code'
+    )
 
     date_creation_meta = models.DateTimeField(blank=True, null=True, verbose_name="Date de création chez Meta")
     date_approbation = models.DateTimeField(blank=True, null=True, verbose_name="Date d'approbation Meta")
@@ -91,6 +132,8 @@ class TemplateWhatsApp(models.Model):
         return f"{self.nom} ({self.categorie}) - {self.get_statut_display()}"
 
     def clean(self):
+        if self.categorie == "AUTHENTICATION":
+            return
         errors = {}
 
         if self.type_header == 'TEXT' and not self.contenu_header:
@@ -112,15 +155,62 @@ class TemplateWhatsApp(models.Model):
         return [f"{{{{{i}}}}}" for i in range(1, self.nombre_variables + 1)]
 
     def composants_meta(self):
+        """
+        Construit les composants attendus par Meta.
+
+        - MARKETING
+        - UTILITY
+        - AUTHENTICATION
+        """
+
+        # =====================================================
+        # AUTHENTICATION
+        # =====================================================
+
+        if self.categorie == "AUTHENTICATION":
+
+            composants = [
+                {
+                    "type": "BODY",
+                    "add_security_recommendation": self.add_security_recommendation
+                }
+            ]
+
+            if self.code_expiration_minutes:
+                composants.append({
+                    "type": "FOOTER",
+                    "code_expiration_minutes": self.code_expiration_minutes
+                })
+
+            composants.append({
+                "type": "BUTTONS",
+                "buttons": [
+                    {
+                        "type": "OTP",
+                        "otp_type": self.otp_type,
+                        "text": self.otp_button_text
+                    }
+                ]
+            })
+
+            return composants
+
+        # =====================================================
+        # MARKETING / UTILITY
+        # =====================================================
+
         composants = []
 
         if self.type_header != 'NONE':
+
             header = {
                 "type": "HEADER",
                 "format": self.type_header,
             }
-            if self.type_header == 'TEXT':
+
+            if self.type_header == "TEXT":
                 header["text"] = self.contenu_header
+
             composants.append(header)
 
         composants.append({
@@ -134,11 +224,15 @@ class TemplateWhatsApp(models.Model):
                 "text": self.contenu_footer,
             })
 
-        boutons = [bouton.as_meta_button() for bouton in self.boutons.all().order_by('ordre')]
+        boutons = [
+            bouton.as_meta_button()
+            for bouton in self.boutons.all().order_by("ordre")
+        ]
+
         if boutons:
             composants.append({
                 "type": "BUTTONS",
-                "buttons": boutons,
+                "buttons": boutons
             })
 
         return composants

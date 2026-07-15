@@ -160,6 +160,7 @@ def sauvegarder_template_meta(template_data):
             'contenu_body': contenu_body,
             'contenu_footer': contenu_footer,
             'nombre_variables': nombre_variables,
+            'template_id_meta': template_data.get('id') or None,
         }
     )
 
@@ -623,26 +624,65 @@ def creer_template(request):
     """
     Crée un template WhatsApp directement via l'API Meta,
     puis le sauvegarde localement si Meta l'accepte.
+
+    Pour la catégorie AUTHENTICATION, Meta impose un format fixe (pas de
+    texte libre) : contenu_body/contenu_header/contenu_footer sont ignorés,
+    et on utilise à la place add_security_recommendation, code_expiration_minutes,
+    otp_type et otp_button_text.
     """
     nom = normaliser_nom_template(request.data.get('nom'))
     categorie = str(request.data.get('categorie', '')).strip().upper()
     langue = str(request.data.get('langue', 'fr')).strip()
+
     contenu_body = str(request.data.get('contenu_body', '')).strip()
     contenu_header = str(request.data.get('contenu_header') or '').strip()
     contenu_footer = str(request.data.get('contenu_footer') or '').strip()
+
     type_header = str(
         request.data.get('type_header') or ('TEXT' if contenu_header else 'NONE')
     ).strip().upper()
+
+    # ======================================================
+    # Champs AUTHENTICATION
+    # ======================================================
+
+    add_security_recommendation = str(
+        request.data.get("add_security_recommendation", "true")
+    ).lower() == "true"
+
+    code_expiration_minutes = request.data.get(
+        "code_expiration_minutes",
+        10
+    )
+
+    otp_type = str(
+        request.data.get("otp_type", "COPY_CODE")
+    ).upper()
+
+    otp_button_text = str(
+        request.data.get("otp_button_text", "Copier le code")
+    )
     header_handle = str(
         request.data.get('header_handle') or request.data.get('exemple_header_handle') or ''
     ).strip()
     boutons_data = request.data.get('boutons') or request.data.get('buttons') or []
 
-    if not nom or not categorie or not contenu_body:
-        return Response(
-            {'erreur': 'Les champs nom, categorie et contenu_body sont obligatoires.'},
-            status=status.HTTP_400_BAD_REQUEST
-        )
+    if categorie == "AUTHENTICATION":
+        # Meta impose son propre format : pas de body/header/footer libres.
+        if not nom or not categorie:
+            return Response(
+                {"erreur": "Nom et catégorie obligatoires."},
+                status=400
+            )
+    else:
+        if not nom or not categorie or not contenu_body:
+            return Response(
+                {
+                    "erreur":
+                        "Les champs nom, categorie et contenu_body sont obligatoires."
+                },
+                status=400
+            )
 
     categories_valides = {choix[0] for choix in TemplateWhatsApp.CATEGORIE_CHOICES}
     if categorie not in categories_valides:
@@ -658,7 +698,7 @@ def creer_template(request):
             status=status.HTTP_400_BAD_REQUEST
         )
 
-    if type_header in {'IMAGE', 'VIDEO', 'DOCUMENT'} and not header_handle:
+    if categorie != "AUTHENTICATION" and type_header in {'IMAGE', 'VIDEO', 'DOCUMENT'} and not header_handle:
         return Response(
             {
                 'erreur': 'Pour un header média, fournissez header_handle après avoir uploadé le média chez Meta.'
@@ -684,58 +724,79 @@ def creer_template(request):
             status=status.HTTP_409_CONFLICT
         )
 
-    if '{{' in contenu_header or '{{' in contenu_footer:
+    if categorie != "AUTHENTICATION" and ('{{' in contenu_header or '{{' in contenu_footer):
         return Response(
             {'erreur': 'Les variables ne sont pas encore supportées dans le header/footer.'},
             status=status.HTTP_400_BAD_REQUEST
         )
 
-    nombre_variables, erreur_variables = analyser_variables_body(contenu_body)
-    if erreur_variables:
-        return Response({'erreur': erreur_variables}, status=status.HTTP_400_BAD_REQUEST)
+    if categorie == "AUTHENTICATION":
 
-    nombre_variables_demande = request.data.get('nombre_variables')
-    if nombre_variables_demande not in (None, ''):
-        try:
-            nombre_variables_demande = int(nombre_variables_demande)
-        except (TypeError, ValueError):
+        contenu_body = ""
+        contenu_header = ""
+        contenu_footer = ""
+        type_header = "NONE"
+
+        # Le body AUTHENTICATION contient toujours exactement 1 variable
+        # (le code de vérification lui-même), imposée par Meta. On la fixe
+        # à 1 plutôt que 0 pour que l'envoi (Phase 2) puisse transmettre
+        # le code en paramètre sans que la vérification "nombre_variables"
+        # ne rejette l'appel.
+        nombre_variables = 1
+        exemples_variables = []
+
+    else:
+
+        nombre_variables, erreur_variables = analyser_variables_body(contenu_body)
+
+        if erreur_variables:
             return Response(
-                {'erreur': 'nombre_variables doit être un nombre entier.'},
-                status=status.HTTP_400_BAD_REQUEST
+                {"erreur": erreur_variables},
+                status=400
             )
 
-        if nombre_variables_demande != nombre_variables:
-            return Response(
-                {
-                    'erreur': 'nombre_variables ne correspond pas aux variables présentes dans contenu_body.',
-                    'attendu': nombre_variables,
-                    'fourni': nombre_variables_demande,
-                },
-                status=status.HTTP_400_BAD_REQUEST
-            )
+        nombre_variables_demande = request.data.get("nombre_variables")
 
-    exemples_variables = request.data.get('exemples_variables') or request.data.get('variables_exemple') or []
-    if exemples_variables and not isinstance(exemples_variables, list):
-        return Response(
-            {'erreur': 'exemples_variables doit être une liste.'},
-            status=status.HTTP_400_BAD_REQUEST
-        )
+        if nombre_variables_demande not in (None, ""):
 
-    if nombre_variables:
-        if not exemples_variables:
-            exemples_variables = [f'exemple_{index}' for index in range(1, nombre_variables + 1)]
+            try:
+                nombre_variables_demande = int(nombre_variables_demande)
 
-        if len(exemples_variables) != nombre_variables:
-            return Response(
-                {
-                    'erreur': 'Le nombre d’exemples doit correspondre au nombre de variables.',
-                    'attendu': nombre_variables,
-                    'fourni': len(exemples_variables),
-                },
-                status=status.HTTP_400_BAD_REQUEST
-            )
+            except (TypeError, ValueError):
 
-        exemples_variables = [str(exemple) for exemple in exemples_variables]
+                return Response(
+                    {"erreur": "nombre_variables doit être un entier."},
+                    status=400
+                )
+
+            if nombre_variables_demande != nombre_variables:
+                return Response(
+                    {
+                        "erreur":
+                            "nombre_variables ne correspond pas au body."
+                    },
+                    status=400
+                )
+
+        exemples_variables = request.data.get("exemples_variables") or []
+
+        if nombre_variables:
+
+            if not exemples_variables:
+                exemples_variables = [
+                    f"exemple_{i}"
+                    for i in range(1, nombre_variables + 1)
+                ]
+
+            exemples_variables = [
+                str(x)
+                for x in exemples_variables
+            ]
+        if categorie == "AUTHENTICATION":
+            # Les boutons AUTHENTICATION sont générés par composants_meta()
+            # à partir de otp_type/otp_button_text, jamais stockés en base.
+            boutons_data = []
+
 
     url = f"https://graph.facebook.com/{GRAPH_VERSION}/{settings.WHATSAPP_WABA_ID}/message_templates"
     headers = {
@@ -746,17 +807,27 @@ def creer_template(request):
     try:
         with transaction.atomic():
             template = TemplateWhatsApp.objects.create(
+
                 nom=nom,
                 categorie=categorie,
                 langue=langue,
+
                 type_header=type_header,
+
                 contenu_body=contenu_body,
                 contenu_header=contenu_header,
                 contenu_footer=contenu_footer,
+
                 nombre_variables=nombre_variables,
                 exemples_variables_body=exemples_variables,
+
+                add_security_recommendation=add_security_recommendation,
+                code_expiration_minutes=code_expiration_minutes,
+                otp_type=otp_type,
+                otp_button_text=otp_button_text,
+
                 date_creation_meta=timezone.now(),
-                statut='en_attente',
+                statut="en_attente",
             )
             template.full_clean()
 
@@ -787,11 +858,13 @@ def creer_template(request):
                 bouton.full_clean()
                 bouton.save()
 
-            composants = ajouter_exemples_aux_composants_meta(
-                template.composants_meta(),
-                exemples_variables=exemples_variables,
-                header_handle=header_handle,
-            )
+            composants = template.composants_meta()
+            if categorie != "AUTHENTICATION":
+                composants = ajouter_exemples_aux_composants_meta(
+                    composants,
+                    exemples_variables=exemples_variables,
+                    header_handle=header_handle,
+                )
             payload = {
                 "name": nom,
                 "language": langue,
@@ -806,10 +879,14 @@ def creer_template(request):
                 transaction.set_rollback(True)
                 return reponse_erreur_meta('Meta a refusé le template.', result)
 
+
             template_id_local = template.id
+            template.template_id_meta = result.get('id')
+            template.save(update_fields=['template_id_meta'])
     except IntegrityError:
         return Response(
-            {'erreur': f'Meta a accepté le template, mais "{nom}" existe déjà localement. Lancez sync_templates.'},
+            {
+                'erreur': f'Meta a accepté le template, mais "{nom}" existe déjà localement. Utilisez le bouton "Synchroniser" pour mettre à jour.'},
             status=status.HTTP_409_CONFLICT
         )
     except ValidationError as e:
@@ -878,7 +955,176 @@ def supprimer_template(request, template_id):
         status=status.HTTP_200_OK
     )
 
+@api_view(['PATCH'])
+def modifier_template(request, template_id):
+    """
+    Modifie un template WhatsApp existant et le soumet à Meta pour
+    re-approbation via POST /{template_id_meta}.
 
+    - nom et langue ne sont PAS modifiables (contrainte Meta).
+    - La modification renvoie le template en statut 'en_attente' chez Meta.
+    - AUTHENTICATION : seuls les champs OTP sont modifiables, le format
+      du body/footer/boutons reste imposé par composants_meta().
+
+    Body JSON : mêmes champs que creer_template, sans nom ni langue.
+    """
+    try:
+        template = TemplateWhatsApp.objects.get(id=template_id)
+    except TemplateWhatsApp.DoesNotExist:
+        return Response({'erreur': 'Template non trouvé.'}, status=status.HTTP_404_NOT_FOUND)
+
+    if not template.template_id_meta:
+        return Response(
+            {
+                'erreur': (
+                    'Ce template n\'a pas d\'ID Meta enregistré (probablement créé avant '
+                    'cette fonctionnalité). Cliquez sur "Synchroniser" pour le récupérer '
+                    'avant de le modifier.'
+                )
+            },
+            status=status.HTTP_400_BAD_REQUEST
+        )
+
+    header_handle = str(request.data.get('header_handle') or '').strip()
+    exemples_variables = request.data.get('exemples_variables') or []
+    boutons_data = []
+
+    if template.categorie == "AUTHENTICATION":
+        if 'add_security_recommendation' in request.data:
+            template.add_security_recommendation = str(
+                request.data.get('add_security_recommendation')
+            ).lower() == 'true'
+        if 'code_expiration_minutes' in request.data:
+            template.code_expiration_minutes = request.data.get('code_expiration_minutes')
+        if 'otp_type' in request.data:
+            template.otp_type = str(request.data.get('otp_type')).upper()
+        if 'otp_button_text' in request.data:
+            template.otp_button_text = str(request.data.get('otp_button_text'))
+
+    else:
+        contenu_body = str(request.data.get('contenu_body', template.contenu_body)).strip()
+        contenu_header = str(request.data.get('contenu_header', template.contenu_header) or '').strip()
+        contenu_footer = str(request.data.get('contenu_footer', template.contenu_footer) or '').strip()
+        type_header = str(request.data.get('type_header', template.type_header)).strip().upper()
+
+        types_header_valides = {choix[0] for choix in TemplateWhatsApp.TYPE_HEADER_CHOICES}
+        if type_header not in types_header_valides:
+            return Response(
+                {'erreur': f'Type de header invalide. Valeurs acceptées : {sorted(types_header_valides)}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if type_header in {'IMAGE', 'VIDEO', 'DOCUMENT'} and not header_handle:
+            return Response(
+                {
+                    'erreur': (
+                        'Pour un header média, uploadez le nouveau fichier via '
+                        '/templates/upload-header-media/ et fournissez header_handle.'
+                    )
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        if '{{' in contenu_header or '{{' in contenu_footer:
+            return Response(
+                {'erreur': 'Les variables ne sont pas supportées dans le header/footer.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        nombre_variables, erreur_variables = analyser_variables_body(contenu_body)
+        if erreur_variables:
+            return Response({'erreur': erreur_variables}, status=status.HTTP_400_BAD_REQUEST)
+
+        if nombre_variables and not exemples_variables:
+            exemples_variables = [f"exemple_{i}" for i in range(1, nombre_variables + 1)]
+        exemples_variables = [str(x) for x in exemples_variables]
+
+        boutons_data = request.data.get('boutons') or request.data.get('buttons') or []
+        if boutons_data and not isinstance(boutons_data, list):
+            return Response({'erreur': 'boutons doit être une liste.'}, status=status.HTTP_400_BAD_REQUEST)
+        if len(boutons_data) > 3:
+            return Response(
+                {'erreur': 'Un template WhatsApp ne doit pas dépasser 3 boutons.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        template.contenu_body = contenu_body
+        template.contenu_header = contenu_header if type_header == 'TEXT' else ''
+        template.contenu_footer = contenu_footer
+        template.type_header = type_header
+        template.nombre_variables = nombre_variables
+        template.exemples_variables_body = exemples_variables
+
+    try:
+        with transaction.atomic():
+            template.full_clean()
+            template.save()
+
+            if template.categorie != "AUTHENTICATION":
+                template.boutons.all().delete()
+                for index, bouton_data in enumerate(boutons_data, start=1):
+                    if not isinstance(bouton_data, dict):
+                        raise ValidationError({'boutons': 'Chaque bouton doit être un objet JSON.'})
+                    ordre = bouton_data.get('ordre') or index
+                    try:
+                        ordre = int(ordre)
+                    except (TypeError, ValueError):
+                        raise ValidationError({'boutons': 'Le champ ordre d’un bouton doit être un entier.'})
+                    bouton = BoutonTemplateWhatsApp(
+                        template=template,
+                        ordre=ordre,
+                        type_bouton=str(bouton_data.get('type_bouton') or bouton_data.get('type') or '').strip().upper(),
+                        texte=str(bouton_data.get('texte') or bouton_data.get('text') or '').strip(),
+                        url=str(bouton_data.get('url') or '').strip(),
+                        numero_telephone=str(
+                            bouton_data.get('numero_telephone') or bouton_data.get('phone_number') or ''
+                        ).strip(),
+                    )
+                    bouton.full_clean()
+                    bouton.save()
+
+            composants = template.composants_meta()
+            if template.categorie != "AUTHENTICATION":
+                composants = ajouter_exemples_aux_composants_meta(
+                    composants,
+                    exemples_variables=exemples_variables,
+                    header_handle=header_handle,
+                )
+
+            payload = {
+                "category": template.categorie,
+                "components": composants,
+            }
+
+            url = f"https://graph.facebook.com/{GRAPH_VERSION}/{template.template_id_meta}"
+            headers = {
+                'Authorization': f'Bearer {settings.WHATSAPP_TOKEN}',
+                'Content-Type': 'application/json',
+            }
+            response = requests.post(url, headers=headers, json=payload, timeout=META_REQUEST_TIMEOUT)
+            result = response.json()
+
+            if not 200 <= response.status_code < 300:
+                transaction.set_rollback(True)
+                return reponse_erreur_meta('Meta a refusé la modification.', result)
+
+            template.statut = 'en_attente'
+            template.date_approbation = None
+            template.save(update_fields=['statut', 'date_approbation'])
+
+    except ValidationError as e:
+        return Response(
+            {'erreur': 'Données invalides.', 'details': formater_erreurs_validation(e)},
+            status=status.HTTP_400_BAD_REQUEST
+        )
+    except Exception as e:
+        return Response({'erreur': f'Erreur réseau : {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    serializer = TemplateWhatsAppSerializer(template)
+    return Response({
+        'message': 'Modification soumise à Meta. Le template repasse en attente de re-approbation.',
+        'template': serializer.data,
+    })
 # ============================================================
 # 1. API CLIENTS
 # ============================================================

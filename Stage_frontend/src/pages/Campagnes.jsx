@@ -27,6 +27,13 @@ const FILTRES_INITIAL = {
     statut: 'tous',
 }
 
+const FILTRES_CLIENTS_INITIAL = {
+    recherche: '',
+    ville: 'tous',
+    entreprise: 'tous',
+    segment: 'tous',
+}
+
 const couleurStatut = (statut) => {
     const couleurs = {
         brouillon: 'bg-gray-100 text-gray-600 border-gray-200',
@@ -53,14 +60,13 @@ function Campagnes() {
     const [campagnes, setCampagnes] = useState([])
     const [templates, setTemplates] = useState([])
     const [clients, setClients] = useState([])
-    const [clientsFiltres, setClientsFiltres] = useState([])
     const [loading, setLoading] = useState(true)
     const [showForm, setShowForm] = useState(false)
     const [showDetail, setShowDetail] = useState(null)
     const [detail, setDetail] = useState(null)
     const [message, setMessage] = useState(null)
     const [envoyant, setEnvoyant] = useState(null)
-    const [filtreClient, setFiltreClient] = useState('')
+    const [filtresClients, setFiltresClients] = useState(FILTRES_CLIENTS_INITIAL)
     const [filtres, setFiltres] = useState(FILTRES_INITIAL)
 
     const [headerFiles, setHeaderFiles] = useState({})
@@ -88,7 +94,6 @@ function Campagnes() {
             setCampagnes(resCampagnes.data)
             setTemplates(resTemplates.data)
             setClients(resClients.data)
-            setClientsFiltres(resClients.data)
         } catch (err) {
             setMessage({ type: 'error', text: 'Erreur lors du chargement des données.' })
             console.error(err)
@@ -102,8 +107,9 @@ function Campagnes() {
     }, [chargerDonnees])
 
     useEffect(() => {
+        const intervalsAuMontage = intervalsActifs.current
         return () => {
-            Object.values(intervalsActifs.current).forEach(clearInterval)
+            Object.values(intervalsAuMontage).forEach(clearInterval)
         }
     }, [])
 
@@ -135,16 +141,42 @@ function Campagnes() {
         }
     }
 
-    const handleFiltreClient = (e) => {
-        const valeur = e.target.value.toLowerCase()
-        setFiltreClient(valeur)
-        setClientsFiltres(
-            clients.filter(c =>
-                c.nom.toLowerCase().includes(valeur) ||
-                c.numero.includes(valeur)
-            )
-        )
-    }
+    // Valeurs uniques disponibles pour les selects, calculées à partir des clients réels
+    const villesDisponibles = useMemo(
+        () => [...new Set(clients.map(c => c.ville).filter(Boolean))].sort(),
+        [clients]
+    )
+    const entreprisesDisponibles = useMemo(
+        () => [...new Set(clients.map(c => c.entreprise).filter(Boolean))].sort(),
+        [clients]
+    )
+    const segmentsDisponibles = useMemo(
+        () => [...new Set(clients.map(c => c.segment).filter(Boolean))].sort(),
+        [clients]
+    )
+
+    // Liste filtrée, recalculée automatiquement à chaque changement de filtre ou de clients
+    const clientsFiltres = useMemo(() => {
+        const recherche = filtresClients.recherche.trim().toLowerCase()
+        return clients.filter(c => {
+            if (recherche) {
+                const matchNom = c.nom?.toLowerCase().includes(recherche)
+                const matchNumero = c.numero?.includes(recherche)
+                const matchEmail = c.email?.toLowerCase().includes(recherche)
+                if (!matchNom && !matchNumero && !matchEmail) return false
+            }
+            if (filtresClients.ville !== 'tous' && c.ville !== filtresClients.ville) return false
+            if (filtresClients.entreprise !== 'tous' && c.entreprise !== filtresClients.entreprise) return false
+            if (filtresClients.segment !== 'tous' && c.segment !== filtresClients.segment) return false
+            return true
+        })
+    }, [clients, filtresClients])
+
+    const filtresClientsActifs =
+        filtresClients.recherche !== '' ||
+        filtresClients.ville !== 'tous' ||
+        filtresClients.entreprise !== 'tous' ||
+        filtresClients.segment !== 'tous'
 
     const toggleClient = (id) => {
         const ids = form.client_ids.includes(id)
@@ -154,10 +186,12 @@ function Campagnes() {
     }
 
     const toutSelectionner = () => {
-        if (form.client_ids.length === clientsFiltres.length) {
-            setForm({ ...form, client_ids: [] })
+        const idsFiltres = clientsFiltres.map(c => c.id)
+        const tousDejaSelectionnes = idsFiltres.every(id => form.client_ids.includes(id)) && idsFiltres.length > 0
+        if (tousDejaSelectionnes) {
+            setForm({ ...form, client_ids: form.client_ids.filter(id => !idsFiltres.includes(id)) })
         } else {
-            setForm({ ...form, client_ids: clientsFiltres.map(c => c.id) })
+            setForm({ ...form, client_ids: [...new Set([...form.client_ids, ...idsFiltres])] })
         }
     }
 
@@ -172,8 +206,7 @@ function Campagnes() {
             setMessage({ type: 'success', text: 'Campagne créée avec succès !' })
             setShowForm(false)
             setForm({ nom: '', template: '', client_ids: [] })
-            setFiltreClient('')
-            setClientsFiltres(clients)
+            setFiltresClients(FILTRES_CLIENTS_INITIAL)
             await chargerDonnees()
         } catch (err) {
             const erreur = err.response?.data?.erreur || 'Erreur lors de la création.'
@@ -450,7 +483,7 @@ function Campagnes() {
                 </div>
             )}
 
-            {/* Filtres */}
+            {/* Filtres campagnes */}
             {!loading && campagnes.length > 0 && (
                 <div className="bg-white rounded-xl border border-gray-200 p-4 mb-6 shadow-sm flex flex-col md:flex-row gap-3">
                     <div className="relative flex-1">
@@ -615,17 +648,56 @@ function Campagnes() {
                                                 onClick={toutSelectionner}
                                                 className="text-xs text-gray-500 hover:text-gray-700 underline"
                                             >
-                                                {form.client_ids.length === clientsFiltres.length ? 'Tout désélectionner' : 'Tout sélectionner'}
+                                                Tout sélectionner / désélectionner (filtrés)
                                             </button>
                                         </div>
 
-                                        <input
-                                            type="text"
-                                            value={filtreClient}
-                                            onChange={handleFiltreClient}
-                                            placeholder="Filtrer par nom ou numéro..."
-                                            className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm mb-3 focus:outline-none focus:ring-2 focus:ring-green-400"
-                                        />
+                                        {/* Filtres multi-critères clients */}
+                                        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-2">
+                                            <input
+                                                type="text"
+                                                value={filtresClients.recherche}
+                                                onChange={(e) => setFiltresClients({ ...filtresClients, recherche: e.target.value })}
+                                                placeholder="Nom, numéro, email..."
+                                                className="col-span-2 md:col-span-1 border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-400"
+                                            />
+                                            <select
+                                                value={filtresClients.ville}
+                                                onChange={(e) => setFiltresClients({ ...filtresClients, ville: e.target.value })}
+                                                className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-400"
+                                            >
+                                                <option value="tous">Toutes les villes</option>
+                                                {villesDisponibles.map(v => <option key={v} value={v}>{v}</option>)}
+                                            </select>
+                                            <select
+                                                value={filtresClients.entreprise}
+                                                onChange={(e) => setFiltresClients({ ...filtresClients, entreprise: e.target.value })}
+                                                className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-400"
+                                            >
+                                                <option value="tous">Toutes les entreprises</option>
+                                                {entreprisesDisponibles.map(v => <option key={v} value={v}>{v}</option>)}
+                                            </select>
+                                            <select
+                                                value={filtresClients.segment}
+                                                onChange={(e) => setFiltresClients({ ...filtresClients, segment: e.target.value })}
+                                                className="border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-green-400"
+                                            >
+                                                <option value="tous">Tous les segments</option>
+                                                {segmentsDisponibles.map(v => <option key={v} value={v}>{v}</option>)}
+                                            </select>
+                                        </div>
+
+                                        {filtresClientsActifs && (
+                                            <div className="flex items-center justify-between mb-2">
+                                                <span className="text-xs text-gray-400">{clientsFiltres.length} client(s) correspondant</span>
+                                                <button
+                                                    onClick={() => setFiltresClients(FILTRES_CLIENTS_INITIAL)}
+                                                    className="text-xs text-gray-500 hover:text-gray-700 underline"
+                                                >
+                                                    Réinitialiser les filtres
+                                                </button>
+                                            </div>
+                                        )}
 
                                         <div className="max-h-48 overflow-y-auto grid gap-1">
                                             {clientsFiltres.map(client => (

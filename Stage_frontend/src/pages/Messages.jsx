@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import axios from "axios";
+import { useAutoRefresh } from "../hooks/useAutoRefresh";
 import {
     RefreshCw,
     MessageCircle,
@@ -41,6 +42,9 @@ export default function Messages() {
     useEffect(() => {
         chargerMessages();
     }, [chargerMessages]);
+
+    // Auto-refresh toutes les 6s — les nouveaux messages arrivent en continu via webhook
+    useAutoRefresh(chargerMessages, 6000);
 
     const handleSelect = async (msg) => {
         setSelected(msg);
@@ -88,7 +92,6 @@ export default function Messages() {
     return (
         <div className="flex h-full gap-4 p-6">
 
-            {/* ── Colonne gauche : liste ── */}
             <div className="w-1/2 flex flex-col gap-4">
                 <div className="flex items-center justify-between">
                     <h1 className="text-2xl font-bold text-gray-800">Messages reçus</h1>
@@ -148,7 +151,6 @@ export default function Messages() {
                 </div>
             </div>
 
-            {/* ── Colonne droite : détail ── */}
             <div className="w-1/2 bg-white rounded-2xl border border-gray-200 p-6 flex flex-col gap-4 overflow-y-auto">
                 {!selected ? (
                     <div className="flex items-center justify-center h-full text-gray-400">

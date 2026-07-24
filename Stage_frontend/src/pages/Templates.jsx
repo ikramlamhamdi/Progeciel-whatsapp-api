@@ -53,7 +53,11 @@ const FILTRES_INITIAL = {
 
 function messageErreurApi(err, fallback) {
     const data = err.response?.data || {}
+    // titre_erreur = message clair destiné à l'utilisateur (error_user_title de Meta),
+    // bien plus précis que le message générique OAuth ("Invalid parameter").
+    // On l'affiche en tête quand il est disponible.
     return [
+        data.titre_erreur,
         data.erreur || fallback,
         data.detail,
         data.code ? `code: ${data.code}` : null,

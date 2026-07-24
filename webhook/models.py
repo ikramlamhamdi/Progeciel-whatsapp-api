@@ -1,3 +1,4 @@
+# webhook/models.py
 from django.db import models
 
 
@@ -34,6 +35,7 @@ class MessageRecu(models.Model):
     type_message    = models.CharField(max_length=10, choices=TYPE_CHOICES)
     contenu_texte   = models.TextField(blank=True)
     media_id        = models.CharField(max_length=255, blank=True)
+    audio_file      = models.FileField(upload_to='audios_recus/', blank=True, null=True)
     statut          = models.CharField(max_length=20, choices=STATUT_CHOICES, default='nouveau')
     reponse_envoyee = models.TextField(blank=True)
     recu_le         = models.DateTimeField(auto_now_add=True)

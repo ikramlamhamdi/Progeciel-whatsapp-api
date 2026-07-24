@@ -12,11 +12,9 @@ import {
     Clock,
     RefreshCw,
     AlertCircle,
-    MessageCircle,
     Bot,
-    UserCheck,
     Inbox,
-    XCircle,
+
 } from 'lucide-react'
 
 const STATUTS_MESSAGES = [

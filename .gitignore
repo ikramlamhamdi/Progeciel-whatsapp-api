@@ -20,5 +20,7 @@ Stage_frontend/.env.local
 Stage_frontend/.env.*.local
 # Logs
 *.log
+# Fichiers statiques compilés (collectstatic)
+staticfiles/
 # Fichiers média uploadés (contenu généré)
-whatsapp/
+media/

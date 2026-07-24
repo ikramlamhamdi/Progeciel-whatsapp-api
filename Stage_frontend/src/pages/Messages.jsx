@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
-import axios from "axios";
+import api from "../api/axios";
 import { useAutoRefresh } from "../hooks/useAutoRefresh";
 import {
     RefreshCw,
@@ -9,7 +9,7 @@ import {
     Send,
 } from "lucide-react";
 
-const API_BASE = "http://localhost:8000/api/webhook";
+const API_BASE = "/webhook";
 
 const STATUT_LABELS = {
     nouveau:        { label: "Nouveau",   color: "bg-red-100 text-red-700 border-red-200" },
@@ -32,7 +32,7 @@ export default function Messages() {
         await Promise.resolve();
         try {
             const params = filtre ? { statut: filtre } : {};
-            const res = await axios.get(`${API_BASE}/messages/`, { params });
+            const res = await api.get(`${API_BASE}/messages/`, { params });
             setMessages(res.data);
         } catch (err) {
             console.error(err);
@@ -53,7 +53,7 @@ export default function Messages() {
 
         if (msg.statut === "nouveau") {
             try {
-                await axios.post(`${API_BASE}/messages/${msg.id}/marquer-lu/`);
+                await api.post(`${API_BASE}/messages/${msg.id}/marquer-lu/`);
                 setSelected((prev) => ({ ...prev, statut: "lu" }));
                 setMessages((prev) => prev.map((m) => (m.id === msg.id ? { ...m, statut: "lu" } : m)));
             } catch (err) {
@@ -66,7 +66,7 @@ export default function Messages() {
         if (!reponse.trim()) return;
         setEnvoi({ loading: true, succes: null });
         try {
-            await axios.post(`${API_BASE}/messages/${selected.id}/repondre/`, { reponse });
+            await api.post(`${API_BASE}/messages/${selected.id}/repondre/`, { reponse });
             setEnvoi({ loading: false, succes: true });
             setReponse("");
             await chargerMessages();
@@ -79,7 +79,7 @@ export default function Messages() {
 
     const handleMarquerRepondu = async () => {
         try {
-            await axios.post(`${API_BASE}/messages/${selected.id}/repondre/`, {});
+            await api.post(`${API_BASE}/messages/${selected.id}/repondre/`, {});
             setSelected((prev) => ({ ...prev, statut: "repondu_manuel" }));
             await chargerMessages();
         } catch (err) {
@@ -177,11 +177,24 @@ export default function Messages() {
 
                         <div>
                             <p className="text-sm text-gray-500 mb-1 font-medium">Message reçu</p>
-                            <div className="bg-gray-50 rounded-lg p-3 text-sm text-gray-800 border border-gray-100">
-                                {selected.contenu_texte || (
-                                    <span className="italic text-gray-400">(message vocal — transcription non disponible)</span>
-                                )}
-                            </div>
+
+                            {selected.type_message === "audio" ? (
+                                selected.audio_file ? (
+                                    <audio controls src={selected.audio_file} className="w-full">
+                                        Ton navigateur ne supporte pas la lecture audio.
+                                    </audio>
+                                ) : (
+                                    <div className="bg-gray-50 rounded-lg p-3 text-sm text-gray-800 border border-gray-100">
+                                        <span className="italic text-gray-400">(audio en cours de récupération...)</span>
+                                    </div>
+                                )
+                            ) : (
+                                <div className="bg-gray-50 rounded-lg p-3 text-sm text-gray-800 border border-gray-100">
+                                    {selected.contenu_texte || (
+                                        <span className="italic text-gray-400">(aucun contenu)</span>
+                                    )}
+                                </div>
+                            )}
                         </div>
 
                         {selected.reponse_envoyee && (

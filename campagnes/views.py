@@ -183,9 +183,15 @@ def reponse_erreur_meta(message, result, http_status=status.HTTP_400_BAD_REQUEST
     erreur_meta = result.get('error', {}) if isinstance(result, dict) else {}
     error_data = erreur_meta.get('error_data') or {}
 
+    # error_user_msg / error_user_title = message destiné à l'utilisateur final,
+    # bien plus clair que le message générique OAuth ("Invalid parameter").
+    # On priorise ce champ quand Meta le fournit.
+    detail_utilisateur = erreur_meta.get('error_user_msg') or erreur_meta.get('message', 'Erreur inconnue')
+
     data = {
         'erreur': message,
-        'detail': erreur_meta.get('message', 'Erreur inconnue'),
+        'detail': detail_utilisateur,
+        'titre_erreur': erreur_meta.get('error_user_title'),
         'details_meta': error_data.get('details'),
         'code': erreur_meta.get('code'),
         'sous_code': erreur_meta.get('error_subcode'),
@@ -1421,15 +1427,31 @@ def envoyer_campagne(request, campagne_id):
     campagne.statut = 'en_cours'
     campagne.save(update_fields=['statut'])
 
-    envoyer_campagne_async.delay(
-        campagne.id,
-        clients_a_envoyer,
-        template.id,
-        variables,
-        mapping_variables,
-        header_media_id or None,
-        header_url or None,
-    )
+    try:
+        envoyer_campagne_async.delay(
+            campagne.id,
+            clients_a_envoyer,
+            template.id,
+            variables,
+            mapping_variables,
+            header_media_id or None,
+            header_url or None,
+        )
+    except Exception as exc:
+        message_erreur = f"Impossible de lancer la tâche Celery: {exc}"
+        Envoi.objects.filter(campagne=campagne, client_id__in=clients_a_envoyer).update(
+            statut='echec',
+            erreur=message_erreur,
+        )
+        campagne.statut = 'echec'
+        campagne.save(update_fields=['statut'])
+        return Response(
+            {
+                'erreur': 'Impossible de lancer la campagne en arrière-plan.',
+                'detail': 'Vérifiez que Redis et le worker Celery sont démarrés.',
+            },
+            status=status.HTTP_503_SERVICE_UNAVAILABLE
+        )
 
     return Response({
         'message': 'Campagne lancée. Envoi en cours en arrière-plan.',

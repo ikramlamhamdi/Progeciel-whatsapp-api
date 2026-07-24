@@ -385,6 +385,7 @@ class Client(models.Model):
             self.numero = numero_normalise
         super().save(*args, **kwargs)
 
+
 class Campagne(models.Model):
     """
     Représente une campagne marketing WhatsApp.

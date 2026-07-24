@@ -1,9 +1,14 @@
 # Stage_backend/urls.py
 from django.contrib import admin
 from django.urls import path, include
+from django.conf import settings
+from django.conf.urls.static import static
 
 urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/', include('campagnes.urls')),
-    path('api/webhook/', include('webhook.urls')),  # ← on ajoute juste /webhook/
+    path('api/webhook/', include('webhook.urls')),
 ]
+
+if settings.DEBUG:
+    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

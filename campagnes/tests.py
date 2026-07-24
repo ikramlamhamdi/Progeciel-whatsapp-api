@@ -1,12 +1,12 @@
 from unittest.mock import patch
 
-from django.test import TestCase
+
 from rest_framework.test import APIRequestFactory
 
 from .models import Campagne, Client, Envoi, TemplateWhatsApp
 from .views import creer_template, envoyer_campagne, normaliser_numero, synchroniser_templates
 
-
+from django.test import TestCase, override_settings
 class FakeMetaResponse:
     def __init__(self, status_code=200, payload=None):
         self.status_code = status_code
@@ -127,7 +127,9 @@ class EnvoiWhatsAppTests(TestCase):
         self.assertEqual(normaliser_numero('212612345678'), '+212612345678')
         self.assertEqual(normaliser_numero('0612345678'), '+212612345678')
 
-    @patch('campagnes.views.requests.post')
+
+    @override_settings(CELERY_TASK_ALWAYS_EAGER=True, CELERY_TASK_EAGER_PROPAGATES=True)
+    @patch('campagnes.tasks.requests.post')
     def test_envoyer_campagne_peut_etre_relancee_sans_doublon_envoi(self, post_mock):
         post_mock.return_value = FakeMetaResponse(200, {'messages': [{'id': 'wamid.test'}]})
 
@@ -138,12 +140,18 @@ class EnvoiWhatsAppTests(TestCase):
                 format='json'
             )
 
+        # Envoi lancé une 1ère fois : la vue répond immédiatement (202, tâche
+        # Celery déléguée), CELERY_TASK_ALWAYS_EAGER l'exécute en synchrone
+        # dans le test pour qu'on puisse vérifier le résultat de l'envoi.
         first_response = envoyer_campagne(build_request(), self.campagne.id)
-        second_response = envoyer_campagne(build_request(), self.campagne.id)
-
-        self.assertEqual(first_response.status_code, 200)
-        self.assertEqual(second_response.status_code, 200)
+        self.assertEqual(first_response.status_code, 202)
         self.assertEqual(Envoi.objects.count(), 1)
         envoi = Envoi.objects.get()
         self.assertEqual(envoi.statut, 'envoye')
         self.assertEqual(envoi.message_id_whatsapp, 'wamid.test')
+
+        # Relancer la même campagne : le client déjà servi avec succès est
+        # exclu, donc aucun nouvel Envoi n'est créé (pas de doublon).
+        second_response = envoyer_campagne(build_request(), self.campagne.id)
+        self.assertEqual(second_response.status_code, 200)
+        self.assertEqual(Envoi.objects.count(), 1)

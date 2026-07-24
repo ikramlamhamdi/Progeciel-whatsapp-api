@@ -4,7 +4,6 @@ import hmac
 import json
 import logging
 import requests
-import base64
 
 from django.conf import settings
 from django.http import HttpResponse
@@ -18,7 +17,7 @@ from rest_framework import status as drf_status
 from .models import MessageRecu
 from .serializers import MessageRecuSerializer
 from campagnes.models import Envoi
-
+from .tasks import envoyer_texte_a_n8n_async, envoyer_audio_a_n8n_async
 logger = logging.getLogger(__name__)
 
 
@@ -115,10 +114,14 @@ def _traiter_message(msg: dict):
     )
     logger.info(f"Message {wa_id} enregistré — type: {msg_type}")
 
-    if msg_type == "text":
-        _envoyer_a_n8n(message)
-    elif msg_type == "audio":
-        _envoyer_audio_a_n8n(message)
+    try:
+        if msg_type == "text":
+            envoyer_texte_a_n8n_async.delay(message.id)
+        elif msg_type == "audio":
+            envoyer_audio_a_n8n_async.delay(message.id)
+    except Exception as exc:
+        logger.exception("Impossible de planifier le traitement n8n du message %s: %s", message.id, exc)
+        message.changer_statut("echec", forcer=True)
 
 
 # ──────────────────────────────────────────────
@@ -190,87 +193,6 @@ def _traiter_statut(statut_meta: dict):
     envoi.statut = nouveau_statut_envoi
     envoi.save(update_fields=["statut"])
     logger.info(f"Envoi {envoi.id} → {nouveau_statut_envoi} (via webhook Meta, event: {nouveau_statut_meta})")
-
-
-def _telecharger_audio_meta(media_id: str) -> bytes | None:
-    headers = {"Authorization": f"Bearer {settings.WHATSAPP_TOKEN}"}
-
-    try:
-        url_info = requests.get(
-            f"https://graph.facebook.com/{settings.META_GRAPH_VERSION}/{media_id}",
-            headers=headers, timeout=10
-        )
-        url_info.raise_for_status()
-        download_url = url_info.json().get("url")
-        if not download_url:
-            logger.error("URL audio introuvable dans la réponse Meta")
-            return None
-    except Exception as e:
-        logger.error(f"Erreur récupération URL audio : {e}")
-        return None
-
-    try:
-        audio_response = requests.get(download_url, headers=headers, timeout=30)
-        audio_response.raise_for_status()
-        logger.info(f"Audio téléchargé depuis Meta ({len(audio_response.content)} bytes)")
-        return audio_response.content
-    except Exception as e:
-        logger.error(f"Erreur téléchargement fichier audio : {e}")
-        return None
-
-
-def _envoyer_audio_a_n8n(message: MessageRecu):
-    n8n_url = settings.N8N_WEBHOOK_URL
-    if not n8n_url:
-        logger.warning("N8N_WEBHOOK_URL non configuré")
-        return
-
-    audio_bytes = _telecharger_audio_meta(message.media_id)
-    if not audio_bytes:
-        message.changer_statut("echec", forcer=True)
-        return
-
-    audio_b64 = base64.b64encode(audio_bytes).decode("utf-8")
-    payload = {
-        "message_id": message.id,
-        "wa_message_id": message.wa_message_id,
-        "from_number": message.from_number,
-        "type_message": "audio",
-        "audio_base64": audio_b64,
-    }
-
-    try:
-        response = requests.post(n8n_url, json=payload, timeout=30)
-        response.raise_for_status()
-        logger.info(f"Audio {message.id} envoyé à n8n ✓")
-        message.changer_statut("en_traitement", forcer=True)
-    except Exception as e:
-        logger.error(f"Erreur envoi audio à n8n : {e}")
-        message.changer_statut("echec", forcer=True)
-
-
-def _envoyer_a_n8n(message: MessageRecu):
-    n8n_url = settings.N8N_WEBHOOK_URL
-    if not n8n_url:
-        logger.warning("N8N_WEBHOOK_URL non configuré")
-        return
-
-    payload = {
-        "message_id": message.id,
-        "wa_message_id": message.wa_message_id,
-        "from_number": message.from_number,
-        "type_message": message.type_message,
-        "contenu_texte": message.contenu_texte,
-    }
-
-    try:
-        response = requests.post(n8n_url, json=payload, timeout=10)
-        response.raise_for_status()
-        logger.info(f"Message {message.id} envoyé à n8n ✓")
-        message.changer_statut("en_traitement", forcer=True)
-    except Exception as e:
-        logger.error(f"Erreur envoi n8n : {e}")
-        message.changer_statut("echec", forcer=True)
 
 
 # ──────────────────────────────────────────────
@@ -361,7 +283,7 @@ def api_messages_liste(request):
     qs = MessageRecu.objects.all().order_by('-recu_le')
     if statut:
         qs = qs.filter(statut=statut)
-    serializer = MessageRecuSerializer(qs, many=True)
+    serializer = MessageRecuSerializer(qs, many=True, context={'request': request})
     return Response(serializer.data)
 
 

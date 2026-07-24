@@ -1,5 +1,5 @@
 {
-  "name": "My workflow",
+  "name": "n8n workflow whatsapp",
   "nodes": [
     {
       "parameters": {
@@ -10,8 +10,8 @@
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2.1,
       "position": [
-        -544,
-        560
+        -592,
+        512
       ],
       "id": "1b52a1b6-0c76-40f3-ab63-c05f51750033",
       "name": "Webhook",
@@ -20,7 +20,7 @@
     {
       "parameters": {
         "promptType": "define",
-        "text": "=Tu es un assistant WhatsApp professionnel.\nRéponds de manière courte, claire et utile et avec la langue que le client pse sa question si fr repo fr si ar repo ar etc .\nmessage_id: {{ $json.body.message_id ?? $json.message_id }}\nMessage du client : {{ $json.body.contenu_texte ?? $json.contenu_texte }}\n\nRéponds uniquement avec ces champs :\n- intention : texte court\n- reponse : réponse à envoyer au client\n- score_confiance : nombre entre 0 et 1",
+        "text": "=Tu es l'assistant WhatsApp automatisé du service client de l'entreprise . Tu réponds aux messages que les clients envoient sur WhatsApp Business.\n\nRÈGLES DE LANGUE :\n- Réponds TOUJOURS dans la même langue/registre que le client a utilisé (français, arabe classique, darija en lettres latines ou en arabe, anglais).\n- Ne traduis jamais la darija en français ou en arabe classique — si le client écrit en darija, réponds en darija dans le même style d'écriture (latin ou arabe).\n- En cas de doute sur la langue exacte, privilégie le français.\n\nRÈGLES DE CONTENU :\n- Sois court, clair, professionnel et chaleureux.\n- N'invente JAMAIS de prix, de produit, de délai de livraison ou d'information factuelle que tu ne possèdes pas explicitement dans ce prompt. Si tu ne sais pas, dis-le et propose de transférer à un conseiller humain.\n- Ne fais aucune promesse contractuelle (remboursement, garantie, délai précis) sans confirmation humaine.\n\nRÈGLES D'ESCALADE (mets score_confiance ≤ 0.39 dans ces cas) :\n- Réclamation, plainte ou client mécontent\n- Demande impliquant un prix, une commande, ou une donnée que tu ne possèdes pas\n- Message ambigu, incomplet, ou hors sujet du service client\n- Toute demande à caractère juridique, médical, ou sensible\n\nmessage_id : {{ $json.body.message_id ?? $json.message_id }}\nMessage du client : {{ $json.body.contenu_texte ?? $json.contenu_texte }}\n\nFORMAT DE SORTIE :\nRéponds UNIQUEMENT avec un objet JSON valide, sans aucun texte avant ou après, sans balises markdown (pas de ```json) :\n{\n  \"intention\": \"catégorie courte (ex: question_prix, reclamation, salutation, demande_info, autre)\",\n  \"reponse\": \"texte à envoyer au client\",\n  \"score_confiance\": 0.0\n}",
         "hasOutputParser": true,
         "options": {}
       },
@@ -31,27 +31,9 @@
         576
       ],
       "id": "1519cc7d-dcf0-4992-9539-19baa5c3edb3",
-      "name": "AI Agent"
-    },
-    {
-      "parameters": {
-        "modelName": "models/gemini-2.5-flash",
-        "options": {}
-      },
-      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
-      "typeVersion": 1.1,
-      "position": [
-        752,
-        1008
-      ],
-      "id": "06e1d901-8576-4597-ab0d-26471889194d",
-      "name": "Google Gemini Chat Model",
-      "credentials": {
-        "googlePalmApi": {
-          "id": "StEwXyumTvcLe2tj",
-          "name": "Google Gemini(PaLM) Api account"
-        }
-      }
+      "name": "AI Agent",
+      "retryOnFail": true,
+      "waitBetweenTries": 3000
     },
     {
       "parameters": {
@@ -143,7 +125,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://host.docker.internal:8000/api/webhook/n8n-repondre/",
+        "url": "http://host.docker.internal:8001/api/webhook/n8n-repondre/",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
@@ -169,7 +151,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://host.docker.internal:8000/api/webhook/n8n-repondre/",
+        "url": "http://host.docker.internal:8001/api/webhook/n8n-repondre/",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
@@ -246,10 +228,6 @@
               "value": "whisper-large-v3"
             },
             {
-              "name": "language",
-              "value": "fr"
-            },
-            {
               "name": "response_format",
               "value": "json"
             }
@@ -270,7 +248,8 @@
           "id": "apwrcNUpOc4TjLg8",
           "name": "Groq account"
         }
-      }
+      },
+      "disabled": true
     },
     {
       "parameters": {
@@ -299,39 +278,43 @@
       ],
       "id": "084373ef-33d4-481b-9bed-81a3564f668c",
       "name": "Edit Fields"
-    }
-  ],
-  "pinData": {
-    "Webhook": [
-      {
-        "json": {
-          "headers": {
-            "host": "localhost:5678",
-            "user-agent": "python-requests/2.34.2",
-            "accept-encoding": "gzip, deflate, zstd",
-            "accept": "*/*",
-            "connection": "keep-alive",
-            "content-length": "200",
-            "content-type": "application/json"
-          },
-          "params": {},
-          "query": {},
-          "body": {
-            "message_id": 84,
-            "wa_message_id": "wamid.HBgMMjEyNjg5MzEyMzkyFQIAEhgUM0FEMkM0NzdFQUVGNTYwREJBNEIA",
-            "from_number": "212689312392",
-            "type_message": "text",
-            "contenu_texte": "Ok merci j’attends"
-          },
-          "webhookUrl": "http://localhost:5678/webhook/whatsapp-message",
-          "executionMode": "production"
-        },
-        "pairedItem": {
-          "item": 0
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.1,
+      "position": [
+        752,
+        1008
+      ],
+      "id": "06e1d901-8576-4597-ab0d-26471889194d",
+      "name": "Google Gemini Chat Model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "StEwXyumTvcLe2tj",
+          "name": "Google Gemini(PaLM) Api account"
         }
       }
-    ]
-  },
+    },
+    {
+      "parameters": {
+        "sessionIdType": "customKey",
+        "sessionKey": "=\n{{ $json.from_number }}",
+        "contextWindowLength": 10
+      },
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.4,
+      "position": [
+        864,
+        928
+      ],
+      "id": "ceef976a-50fd-4fcc-aeae-fdf46ac48eb5",
+      "name": "Simple Memory1"
+    }
+  ],
+  "pinData": {},
   "connections": {
     "Webhook": {
       "main": [
@@ -350,17 +333,6 @@
           {
             "node": "Normalize AI Output",
             "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Google Gemini Chat Model": {
-      "ai_languageModel": [
-        [
-          {
-            "node": "AI Agent",
-            "type": "ai_languageModel",
             "index": 0
           }
         ]
@@ -456,6 +428,28 @@
           }
         ]
       ]
+    },
+    "Google Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simple Memory1": {
+      "ai_memory": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
   "active": true,
@@ -464,7 +458,7 @@
     "binaryMode": "separate",
     "availableInMCP": false
   },
-  "versionId": "c924126a-be40-4a92-a700-457e1b714d36",
+  "versionId": "478aa1bd-b45e-4d50-acba-87398f7e024b",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "0363b1313cdf37be3dcdc179f294dd03c571a09c26cb093473665b5a0da9c2d2"
